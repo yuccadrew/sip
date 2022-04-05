@@ -1,0 +1,28 @@
+Some Definitions
+1) n_ion: number of ion types
+2) n_node: number of nodes for a mesh
+
+Linear System [K]*{u}={b}
+1) {u}: column vector of length (n_ion+2)*n_node, where
+   on each node u is a vector of length n_ion+2, that is
+   number of ions plus potential plus surface charge density
+2) [K]: matrix of size [(n_ion+2)*n_node]**2
+3) {b}: column vector of length (n_ion+2)*n_node
+
+
+Code Optimization To-Do List (Take n_ion = 2 for example)
+
+1. Re-structure [K],{u}, and {b} so that the order of {u} becomes
+   (u_1, u_2, u_3, u_4)_for_node_1, (u_1,u_2,u_3,u_4)_for_node_2, etc.
+  
+2. Decouple [K] so that [K] = [K_1] + [K_2], where
+   [K_1] is static and [K_2] needs to be re-computed for different
+   frequencies
+   
+3. Modify subroutines in computing elementary [K] and {b} 
+   so that they will skip elements if the processor_id does not 
+   equal to the processor_flags_for_elements
+   
+4. Compute basis functions for all elements one time and re-use them
+
+5. Seperate mesh generation/material property setup from the main code
