@@ -13,7 +13,7 @@ class Consts():
     pass
 
 Consts.e = constants.e #elementary charge
-Consts.epsilon_0 = constants.epsilon_0 #vacuum permittivity
+Consts.p = constants.epsilon_0 #vacuum permittivity
 Consts.a = constants.N_A #Avogadro constant
 Consts.k = constants.k #Boltzmann constant
 Consts.f = constants.value('Faraday constant') #Faraday constant
@@ -62,17 +62,7 @@ def assemble_Ke2d(mesh,domain):
                 f_d=domain.f_d[ind_n,:],Je=mesh.elem_basis[i,:,:],
                 area=mesh.elem_area[i],ind_K=ind_K,ind_b=ind_b
                 ) #wrapped
-            
-            if i==0:
-                print('Source')
-                print(domain.f_n[ind_n,:])
-                print('ind')
-                print(ind_K)
-                print(ind_b)
-                print('Check5/2')
-                print(Ke1)
-                print(Ke2)
-                print(be1)
+
         else:
             Ke1 = np.zeros((3*n_rep,3*n_rep),dtype=float)
             Ke2 = np.zeros((3*n_rep,3*n_rep),dtype=float)
@@ -180,7 +170,7 @@ def assemble_Ks2d(mesh,robin):
     V2 = np.zeros(n_edge*4*n_rep**2,dtype=float)
     b1 = np.zeros(n_node*n_rep,dtype=float)
     b2 = np.zeros(n_node*n_rep,dtype=float)
-    
+
     REP = np.reshape(np.arange(n_node*n_rep,dtype=int),(n_node,n_rep))
     ROW = np.matlib.repmat(np.arange(2*n_rep,dtype=int),2*n_rep,1).T
     COL = np.matlib.repmat(np.arange(2*n_rep,dtype=int),2*n_rep,1)
@@ -188,7 +178,7 @@ def assemble_Ks2d(mesh,robin):
     ind_K = np.where(robin.K_stack.flatten(order='C'))[0]
     ind_b = np.where(robin.b_stack.flatten(order='C'))[0]
 
-    edge_proc = mesh.with_stern
+    edge_proc = mesh.is_with_stern
     for i in range(n_edge):
         cnt = i*4*n_rep**2
         ind_n = mesh.edges[i,:]
@@ -303,16 +293,16 @@ class StaticDomain():
         self.b2 = [] #placeholder
 
         #set domain properties in the air
-        self.c_x[mesh.in_air,:,:] = Consts.epsilon_0
-        self.c_y[mesh.in_air,:,:] = Consts.epsilon_0
+        self.c_x[mesh.is_in_air,:,:] = Consts.p
+        self.c_y[mesh.is_in_air,:,:] = Consts.p
 
         #set domain properties in the water
-        self.c_x[mesh.in_water,:,:] = physics.perm_a
-        self.c_y[mesh.in_water,:,:] = physics.perm_a
+        self.c_x[mesh.is_in_water,:,:] = physics.perm_a
+        self.c_y[mesh.is_in_water,:,:] = physics.perm_a
 
         #set domain properties in the solid
-        self.c_x[mesh.in_solid,:,:] = physics.perm_i
-        self.c_y[mesh.in_solid,:,:] = physics.perm_i
+        self.c_x[mesh.is_in_solid,:,:] = physics.perm_i
+        self.c_y[mesh.is_in_solid,:,:] = physics.perm_i
 
         #set point source for electric field
         for i in range(len(survey.f_0)):
@@ -363,7 +353,7 @@ class StaticDomain():
         K_symbol = K_symbol|np.any(np.sign(self.beta_x).astype(bool),axis=0)
         K_symbol = K_symbol|np.any(np.sign(self.beta_y).astype(bool),axis=0)
         K_symbol = K_symbol|np.any(np.sign(self.a).astype(bool),axis=0)
-        
+
         b_symbol = np.any(np.sign(self.f).astype(bool),axis=0)
         b_symbol = b_symbol|np.any(np.sign(self.gamma_x).astype(bool),axis=0)
         b_symbol = b_symbol|np.any(np.sign(self.gamma_y).astype(bool),axis=0)
@@ -377,7 +367,7 @@ class StaticDomain():
             for j in range(3):
                 K_stack[i][j] = K_symbol
             b_stack[i][0] = b_symbol
-        
+
         self.K_stack = np.asarray(np.bmat(K_stack),dtype=int)
         self.b_stack = np.asarray(np.bmat(b_stack),dtype=int)
         
@@ -397,7 +387,7 @@ class StaticDomain():
         K_symbol = K_symbol|np.any(np.sign(self.beta_y).astype(bool),axis=0)
         K_symbol = K_symbol|np.any(np.sign(self.a).astype(bool),axis=0)
         K_symbol = K_symbol|np.any(np.sign(self.a_n).astype(bool),axis=0)
-        
+
         b_symbol = np.any(np.sign(self.f).astype(bool),axis=0)
         b_symbol = b_symbol|np.any(np.sign(self.f_n).astype(bool),axis=0)
         b_symbol = b_symbol|np.any(np.sign(self.f_d).astype(bool),axis=0)
@@ -411,13 +401,13 @@ class StaticDomain():
             for j in range(3):
                 K_stack[i][j] = K_symbol
             b_stack[i][0] = b_symbol
-        
+
         self.K_stack = np.asarray(np.bmat(K_stack),dtype=int)
         self.b_stack = np.asarray(np.bmat(b_stack),dtype=int)
-        
+
         self.K_symbol = csr_matrix(K_symbol.astype(int))
         self.b_symbol = csr_matrix(b_symbol.astype(int))
-        
+
         #compute global matrices K1/K2 and vectors b1/b2
         self.K1,self.K2,self.b1,self.b2= assemble_Ke2d(mesh,self)
 
@@ -456,7 +446,7 @@ class StaticRobin():
         self.b1 = [] #placeholder
         self.b2 = [] #placeholder
 
-        self.g_s[mesh.with_stern,:] = sigma_diffuse
+        self.g_s[mesh.is_with_stern,:] = sigma_diffuse
 
         #multiply robin attributes by edge_factor
         for i in range(n_rep):
@@ -464,11 +454,11 @@ class StaticRobin():
                 self.q_s[:,i,j] = self.q_s[:,i,j]*mesh.edge_factor
 
             self.g_s[:,i] = self.g_s[:,i]*mesh.edge_factor
-        
+
         #scale robin attributes by distance scaling factor
         self.q_s = self.q_s*mesh.dist_factor
         self.g_s = self.g_s*mesh.dist_factor
-        
+
         #find sparsity pattern of robin attributes
         K_symbol = np.any(np.sign(self.q_s).astype(bool),axis=0)
         b_symbol = np.any(np.sign(self.g_s).astype(bool),axis=0)
@@ -485,14 +475,14 @@ class StaticRobin():
 
         self.K_symbol = csr_matrix(K_symbol.astype(int))
         self.b_symbol = csr_matrix(b_symbol.astype(int))
-        
+
         #compute global matrices K1/K2 and vectors b1/b2
         self.K1,self.K2,self.b1,self.b2 = assemble_Ks2d(mesh,self)
-    
+
     def update(self):
         #update the domain attributes by some function
         #placeholder
-        
+
         #compute global matrices K1/K2 and vectors b1/b2
         self.K1,self.K2,self.b1,self.b2 = assemble_Ks2d(mesh,self)
 
@@ -525,12 +515,12 @@ class StaticDirichlet():
         self.s_n = np.zeros((n_node,n_rep),dtype=float)
 
         #set dirichlet attributes at infinity
-        self.on_first_kind_bc[mesh.on_infinity_nodes,:] = True
-        self.s_n[mesh.on_infinity_nodes,:] = 0.0
+        self.on_first_kind_bc[mesh.is_on_outer_bound,:] = True
+        self.s_n[mesh.is_on_outer_bound,:] = 0.0
 
         #set dirichlet attributes on equipotential surface
-        self.on_first_kind_bc[mesh.on_equipotential_nodes,:] = True
-        self.s_n[mesh.on_equipotential_nodes,:] = survey.s_0
+        self.on_first_kind_bc[mesh.is_on_equipotential,:] = True
+        self.s_n[mesh.is_on_equipotential,:] = survey.s_0
 
         #set potential as zero if the solid particle is metal
         if physics.is_solid_metal:
@@ -538,9 +528,9 @@ class StaticDirichlet():
             self.s_n[mesh.on_stern_nodes,:] = 0.0
 
         #deactivate unused nodes outside the air, water, and solid
-        self.on_first_kind_bc[mesh.on_nodes_outside_domain,:] = True
-        self.s_n[mesh.on_nodes_outside_domain,:] = 0.0
-        
+        self.on_first_kind_bc[mesh.is_on_outside_domain,:] = True
+        self.s_n[mesh.is_on_outside_domain,:] = 0.0
+
     def set_1st_kind_bc(self,K_in,b_in):
         print('Incoorprating the Dirichlet boundary condition')
         start = time.time()
@@ -580,6 +570,332 @@ class PertubStern():
         n_edge = len(mesh.edges)
         n_rep = 1
 
+        pass
+
+    pass
+
+
+class Domain():
+    def __init__(self,mesh,air,water,solid):
+        n_node = len(mesh.nodes)
+        n_elem = len(mesh.elements)
+        n_rep = len(solid.c_x)
+
+        #declare all attributes first
+        self.c_x = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.c_y = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.alpha_x = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.alpha_y = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.beta_x = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.beta_y = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.gamma_x = np.zeros((n_elem,n_rep),dtype=float)
+        self.gamma_y = np.zeros((n_elem,n_rep),dtype=float)
+        self.a = np.zeros((n_elem,n_rep,n_rep),dtype=float)
+        self.f = np.zeros((n_elem,n_rep),dtype=float)
+        self.a_n = np.zeros((n_node,n_rep,n_rep),dtype=float) #a on nodes
+        self.f_n = np.zeros((n_node,n_rep),dtype=float) #f on nodes
+        self.f_d = np.zeros((n_node,n_rep),dtype=float) #f on point sources
+        self.K_symbol = csr_matrix((n_rep,n_rep),dtype=int) #placeholder
+        self.b_symbol = csr_matrix((n_rep,1),dtype=int) #placeholder
+        self.K_stack = np.zeros((n_rep*3,n_rep*3),dtype=int) #placeholder
+        self.b_stack = np.zeros((n_rep*3,1),dtype=int) #placeholder
+        self.K1 = csr_matrix((n_node*n_rep,n_node*n_rep),dtype=float) #placeholder
+        self.K2 = csr_matrix((n_node*n_rep,n_node*n_rep),dtype=float) #placeholder
+        self.b1 = np.zeros(n_node*n_rep,dtype=float) #placeholder
+        self.b2 = np.zeros(n_node*n_rep,dtype=float) #placeholder
+        
+        #update domain attributes accordingly
+        self.update_air(mesh,air)
+        self.update_water(mesh,water)
+        self.update_solid(mesh,solid)
+
+    def update_air(self,mesh,air,**kwargs):
+        group_1 = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y','a','a_n']
+        group_2 = ['gamma_x','gamma_y','f','f_n','f_d']
+        n_rep = self.c_x.shape[1]
+        
+        mask = mesh.is_in_air
+        x = mesh.elem_mids[mask,0]
+        y = mesh.elem_mids[mask,1]
+        for i in range(n_rep):
+            for j in range(n_rep):
+                for key in air.__dict__.keys():
+                    value = air.__dict__[key]
+                    if key in group_1:
+                        if callable(value[i][j]):
+                            self.__dict__[key][mask,i,j] = value[i][j](x,y)
+                        else:
+                            self.__dict__[key][mask,i,j] = value[i][j]
+
+        mask = mesh.is_on_air
+        x = mesh.nodes[mask,0]
+        y = mesh.nodes[mask,1]
+
+        for i in range(n_rep):
+            for key in air.__dict__.keys():
+                value = air.__dict__[key]
+                if key in group_2:
+                    if callable(value[i]):
+                        self.__dict__[key][mask,i] = value[i](x,y)
+                    else:
+                        self.__dict__[key][mask,i] = value[i]
+
+        self.__scale_by_axis_symmetry(mesh,*air.__dict__.keys())
+        self.__scale_by_dist_factor(mesh,*air.__dict__.keys())
+
+    def update_water(self,mesh,water,**kwargs):
+        group_1 = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y','a','a_n']
+        group_2 = ['gamma_x','gamma_y','f','f_n','f_d']
+        n_rep = self.c_x.shape[1]
+        
+        mask = mesh.is_in_water
+        x = mesh.elem_mids[mask,0]
+        y = mesh.elem_mids[mask,1]
+        for i in range(n_rep):
+            for j in range(n_rep):
+                for key in water.__dict__.keys():
+                    value = water.__dict__[key]
+                    if key in group_1:
+                        if callable(value[i][j]):
+                            self.__dict__[key][mask,i,j] = value[i][j](x,y)
+                        else:
+                            self.__dict__[key][mask,i,j] = value[i][j]
+
+        mask = mesh.is_on_water
+        x = mesh.nodes[mask,0]
+        y = mesh.nodes[mask,1]
+
+        for i in range(n_rep):
+            for key in water.__dict__.keys():
+                value = water.__dict__[key]
+                if key in group_2:
+                    if callable(value[i]):
+                        self.__dict__[key][mask,i] = value[i](x,y)
+                    else:
+                        self.__dict__[key][mask,i] = value[i]
+
+        self.__scale_by_axis_symmetry(mesh,*water.__dict__.keys())
+        self.__scale_by_dist_factor(mesh,*water.__dict__.keys())
+
+    def update_solid(self,mesh,solid,**kwargs):
+        group_1 = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y','a','a_n']
+        group_2 = ['gamma_x','gamma_y','f','f_n','f_d']
+        n_rep = self.c_x.shape[1]
+        
+        mask = mesh.is_in_solid
+        x = mesh.elem_mids[mask,0]
+        y = mesh.elem_mids[mask,1]
+        for i in range(n_rep):
+            for j in range(n_rep):
+                for key in solid.__dict__.keys():
+                    value = solid.__dict__[key]
+                    if key in group_1:
+                        if callable(value[i][j]):
+                            self.__dict__[key][mask,i,j] = value[i][j](x,y)
+                        else:
+                            self.__dict__[key][mask,i,j] = value[i][j]
+
+        mask = mesh.is_on_solid
+        x = mesh.nodes[mask,0]
+        y = mesh.nodes[mask,1]
+
+        for i in range(n_rep):
+            for key in solid.__dict__.keys():
+                value = solid.__dict__[key]
+                if key in group_2:
+                    if callable(value[i]):
+                        self.__dict__[key][mask,i] = value[i](x,y)
+                    else:
+                        self.__dict__[key][mask,i] = value[i]
+
+        self.__scale_by_axis_symmetry(mesh,*solid.__dict__.keys())
+        self.__scale_by_dist_factor(mesh,*solid.__dict__.keys())        
+
+    def build_system(self,mesh):
+        #find sparsity pattern of the domain attributes
+        K_symbol = np.any(np.sign(self.c_x).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.c_y).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.alpha_x).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.alpha_y).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.beta_x).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.beta_y).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.a).astype(bool),axis=0)
+        K_symbol = K_symbol|np.any(np.sign(self.a_n).astype(bool),axis=0)
+        
+        b_symbol = np.any(np.sign(self.f).astype(bool),axis=0)
+        b_symbol = b_symbol|np.any(np.sign(self.f_n).astype(bool),axis=0)
+        b_symbol = b_symbol|np.any(np.sign(self.f_d).astype(bool),axis=0)
+        b_symbol = b_symbol|np.any(np.sign(self.gamma_x).astype(bool),axis=0)
+        b_symbol = b_symbol|np.any(np.sign(self.gamma_y).astype(bool),axis=0)
+        b_symbol = np.reshape(b_symbol,(-1,1))
+
+        K_stack = [[None]*3 for i in range(3)]
+        b_stack = [[None]*1 for i in range(3)]
+        for i in range(3):
+            for j in range(3):
+                K_stack[i][j] = K_symbol
+            b_stack[i][0] = b_symbol
+
+        self.K_stack = np.asarray(np.bmat(K_stack),dtype=int)
+        self.b_stack = np.asarray(np.bmat(b_stack),dtype=int)
+        
+        self.K_symbol = csr_matrix(K_symbol.astype(int))
+        self.b_symbol = csr_matrix(b_symbol.astype(int))
+
+        #compute global matrices K1/K2 and vectors b1/b2
+        self.K1,self.K2,self.b1,self.b2= assemble_Ke2d(mesh,self)
+
+    def spy(self):
+        print('Sparsity pattern for Ke and be (zoom-out vs zoom-in)')
+        fig,ax = plt.subplots(1,4,figsize=(8,2))
+        axes = ax.flatten()
+        axes[0].spy(self.K_stack)
+        axes[1].spy(self.b_stack)
+        axes[2].spy(self.K_symbol)
+        axes[3].spy(self.b_symbol)
+        axes[1].set_xticks(range(1))
+        axes[3].set_xticks(range(1))
+        axes[0].set_xlabel('Ke')
+        axes[1].set_xlabel('be')
+        axes[2].set_xlabel('Ke')
+        axes[3].set_xlabel('be')
+        plt.show()
+
+    def __scale_by_axis_symmetry(self,mesh,*args):
+        if args: #if tuple is not empty
+            keys = args
+        else:
+            keys = self.__dict__.keys()
+
+        group_1 = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y','a']
+        group_2 = ['a_n']
+        group_3 = ['gamma_x','gamma_y','f']
+        group_4 = ['f_n','f_d']
+
+        n_rep = self.c_x.shape[1]
+        for i in range(n_rep):
+            for j in range(n_rep):
+                for ky in keys:
+                    if ky in group_1:
+                        self.__dict__[ky][:,i,j] = self.__dict__[ky][:,i,j]*mesh.elem_factor
+                    if ky in group_2:
+                        self.__dict__[ky][:,i,j] = self.__dict__[ky][:,i,j]*mesh.node_factor
+
+            for ky in keys:
+                if ky in group_3:
+                    self.__dict__[ky][:,i] = self.__dict__[ky][:,i]*mesh.elem_factor
+                if ky in group_4:
+                    self.__dict__[ky][:,i] = self.__dict__[ky][:,i]*mesh.node_factor
+
+    def __scale_by_dist_factor(self,mesh,*args):
+        if args: #if tuple is not empty
+            keys = args
+        else:
+            keys = self.__dict__.keys()
+
+        group_1 = ['c_x','c_y']
+        group_2 = ['alpha_x','alpha_y','beta_x','beta_y','gamma_x','gamma_y']
+        group_3 = ['a','a_n','f','f_n','f_d']
+
+        for ky in keys:
+            if ky in group_1:
+                self.__dict__[ky] = self.__dict__[ky]*mesh.dist_factor**2
+            if ky in group_2:
+                self.__dict__[ky] = self.__dict__[ky]*mesh.dist_factor
+            if ky in group_3:
+                self.__dict__[ky] = self.__dict__[ky]*1.0
+
+
+class Dirichlet():
+    def __init__(self,mesh,outer_bc):
+        n_node = len(mesh.nodes)
+        n_rep = 1
+
+        #declare all attributes first
+        self.on_first_kind_bc = np.zeros((n_node,n_rep),dtype=bool)
+        self.s_n = np.zeros((n_node,n_rep),dtype=float)
+
+        #update dirichlet attributes accordingly
+        self.update_outer_bc(mesh,outer_bc)
+
+    def update_outer_bc(self,mesh,outer_bc,*args): #includ variable arguments
+        n_rep = self.s_n.shape[1]
+        mask = mesh.is_on_outer_bound
+        x = mesh.nodes[mask,0]
+        y = mesh.nodes[mask,1]
+
+        for i in range(n_rep):
+            self.on_first_kind_bc[mask,i] = True
+            if callable(outer_bc.s_n[i]):
+                self.s_n[mask,i] = outer_bc.s_n[i](x=x,y=y)
+            else:
+                self.s_n[mask,i] = outer_bc.s_n[i]
+
+    def set_first_kind_bc(self,K_in,b_in):
+        print('Incoorprating the Dirichlet boundary condition')
+        start = time.time()
+
+        on_first_kind_bc = self.on_first_kind_bc.flatten(order='C')
+        s_n = self.s_n.flatten(order='C')
+
+        K = csr_matrix.copy(K_in)
+        b = np.zeros_like(b_in)
+
+        mask = ~on_first_kind_bc
+        b[mask] = b_in[mask]-K.dot(s_n)[mask]
+
+        mask = on_first_kind_bc
+        b[mask] = s_n[mask]
+        ind_n = np.where(mask)[0]
+        rows = ind_n
+        cols = ind_n
+        M = csr_matrix(K.shape).tolil()
+        M[rows,cols] = 1.0
+        K = zero_rows(K,rows)
+        K = zero_cols(K,cols)
+        K = K+M
+
+        elapsed = time.time()-start
+        print('Time elapsed ',elapsed,'sec')
+        print('')
+        return K,b
+
+
+class Air():
+    def __init__(self,**kwargs): #avoid long/variable list of inputs
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
+
+class Water():
+    def __init__(self,**kwargs): #avoid long/variable list of inputs
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
+
+class Solid():
+    def __init__(self,**kwargs): #avoid long/variable list of inputs
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
+
+class Stern():
+    def __init__(self,**kwargs): #avoid long/variable list of inputs
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
+
+class InnerBound():
+    def __init__(self,**kwargs): #avoid long/variable list of inputs
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
+
+class OuterBound():
+    def __init__(self,**kwargs): #avoid long/variable list of inputs
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
 
 class Physics():
     def __init__(self,**kwargs): #avoid long list of inputs
@@ -591,9 +907,9 @@ class Physics():
         self.Diff_a = [val*Consts.k*self.temperature/Consts.e
                        for val in self.mu_a] #wrapped
         self.Diff_s = self.mu_s*Consts.k*self.temperature/Consts.e
-        self.perm_a = self.rel_perm_a*Consts.epsilon_0
-        self.perm_i = self.rel_perm_i*Consts.epsilon_0
-        
+        self.perm_a = self.rel_perm_a*Consts.p
+        self.perm_i = self.rel_perm_i*Consts.p
+
         n_ion = len(self.c_ion)
         self.lambda_d = [0.0]*n_ion
         for i in range(n_ion):
@@ -606,5 +922,4 @@ class Survey():
     def __init__(self,**kwargs): #avoid long list of inputs
         for key,value in kwargs.items():
             setattr(self,key,value)
-
 

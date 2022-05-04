@@ -1,21 +1,14 @@
 import numpy as np
 import subprocess,time
 
+from cycler import cycler
+import matplotlib
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-poster')
 
 
-# class Consts():
-#     pass
-
 class Flags():
     pass
-
-# Consts.e = constants.e #elementary charge
-# Consts.epsilon_0 = constants.epsilon_0 #vacuum permittivity
-# Consts.a = constants.N_A #Avogadro constant
-# Consts.k = constants.k #Boltzmann constant
-# Consts.f = constants.value('Faraday constant') #Faraday constant
 
 Flags.solid = 1
 Flags.water = 2
@@ -28,86 +21,6 @@ Flags.top_bound = 11
 Flags.bottom_bound = 12
 Flags.left_bound = 13
 Flags.right_bound = 14
-
-def build_slab(slab):
-    #define size of the bounding box
-    radius_b = max(slab.radius_air,slab.radius_water,slab.radius_solid)
-    height_b = max(slab.height_air,slab.height_water,slab.height_solid)
-    height_water = slab.height_water
-
-    #define control points, line segments, holes, and zone constraints
-    cpts = np.zeros((0,3),dtype=float) #x/y/z of control points
-    segs = np.zeros((0,3),dtype=int) #ind_a/ind_b/flag of lines
-    holes = np.zeros((0,2),dtype=float) #x/y of holes
-    zones = np.zeros((0,3),dtype=float) #x/y/area of zone constraints
-
-    #define holes and zone constraints
-    if height_water<height_b:
-        x = np.r_[0.0,0.0,0.0] #solid/water/air
-        y = np.r_[-height_b,height_water,height_water*2+height_b]/2.0
-        area = np.r_[1.0,1.0,1.0]*(radius_b/20.0)**2
-        zones = np.r_[zones,np.c_[x,y,area]]
-    else:
-        x = np.r_[0.0,0.0] #solid/water
-        y = np.r_[-height_b,height_water]/2.0
-        area = np.r_[1.0,1.0]*(radius_b/20.0)**2
-        zones = np.r_[zones,np.c_[x,y,area]]
-
-    #define the outer boundary box
-    x = np.r_[-radius_b,radius_b,radius_b,-radius_b]
-    y = np.r_[-height_b,-height_b,height_b,height_b]
-    cpts = np.r_[cpts,np.c_[x,y,np.ones_like(x)*1]]
-
-    #define the solid-water interface
-    x = np.r_[-radius_b,radius_b]
-    y = np.r_[0.0,0.0]
-    cpts = np.r_[cpts,np.c_[x,y,np.ones_like(x)*1]]
-
-    #define the air-water interface
-    if height_water<height_b:
-        x = np.r_[-radius_b,radius_b]
-        y = np.r_[height_water,height_water]
-        cpts = np.r_[cpts,np.c_[x,y,np.ones_like(x)*1]]
-
-    #define the segments on the bottom boundary
-    x = np.r_[-radius_b,radius_b]
-    y = np.r_[-height_b,-height_b]
-    edges,edge_flags = search_edges(cpts,x,y,Flags.bottom_bound)
-    segs = np.r_[segs,np.c_[edges,edge_flags]]
-
-    #define the segments on the right boundary
-    x = np.r_[radius_b,radius_b,radius_b]
-    y = np.r_[-height_b,height_water,height_b]
-    edges,edge_flags = search_edges(cpts,x,y,Flags.right_bound)
-    segs = np.r_[segs,np.c_[edges,edge_flags]]
-
-    #define the segments on the top boundary
-    x = np.r_[-radius_b,radius_b]
-    y = np.r_[height_b,height_b]
-    edges,edge_flags = search_edges(cpts,x,y,Flags.top_bound)
-    segs = np.r_[segs,np.c_[edges,edge_flags]]
-
-    #define the segments on the left boundary
-    x = np.r_[-radius_b,-radius_b,-radius_b]
-    y = np.r_[-height_b,height_water,height_b]
-    edges,edge_flags = search_edges(cpts,x,y,Flags.left_bound)
-    segs = np.r_[segs,np.c_[edges,edge_flags]]
-
-    #define the segments on the solid-water interface
-    x = np.r_[-radius_b,radius_b]
-    y = np.r_[0.0,0.0]
-    edges,edge_flags = search_edges(cpts,x,y,Flags.sw_interface)
-    segs = np.r_[segs,np.c_[edges,edge_flags]]
-
-    #define the segments on the air-water interface
-    if height_water<height_b:
-        x = np.r_[-radius_b,radius_b]
-        y = np.r_[height_water,height_water]
-        edges,edge_flags = search_edges(cpts,x,y,Flags.aw_interface)
-        segs = np.r_[segs,np.c_[edges,edge_flags]]
-
-    return cpts,segs,holes,zones
-
 
 def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
     #build the poly file
@@ -143,7 +56,7 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
     f1.write('\n')
 
     #write the holes
-    f1.write('%d\n'%(len(holes)))
+    f1.write('{0:6.0F}\n'.format(len(holes)))
 
     for i in range(len(holes)):
         x = holes[i,0]*dist_factor
@@ -153,7 +66,7 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
     f1.write('\n')
 
     #write the area constraints for zones
-    f1.write('%d\n'%(len(zones)))
+    f1.write('{0:6.0F}\n'.format(len(zones)))
 
     for i in range(len(zones)):
         x = zones[i,0]*dist_factor
@@ -177,9 +90,9 @@ def call_triangle(mesh_prefix,triangle_path):
     return
 
 def import_nodes(mesh_prefix):
-    print('Reading %s.1.node'%mesh_prefix)
+    print('Reading {}.1.node'.format(mesh_prefix))
 
-    f = open('%s.1.node'%mesh_prefix)
+    f = open('{}.1.node'.format(mesh_prefix))
     n_node = int(f.readline().split()[0])
     nodes = np.zeros((n_node,2),dtype=float)
     node_flags = np.zeros(n_node,dtype=int)
@@ -193,9 +106,9 @@ def import_nodes(mesh_prefix):
 
 
 def import_elements(mesh_prefix):
-    print('Reading %s.1.ele'%mesh_prefix)
+    print('Reading {}.1.ele'.format(mesh_prefix))
 
-    f = open('%s.1.ele'%mesh_prefix)
+    f = open('{}.1.ele'.format(mesh_prefix))
     n_elem = int(f.readline().split()[0])
     elements = np.zeros((n_elem,3),dtype=int)
     elem_flags = np.zeros(n_elem,dtype=int)
@@ -211,9 +124,9 @@ def import_elements(mesh_prefix):
 
 
 def import_edges(mesh_prefix):
-    print('Reading %s.1.edge'%mesh_prefix)
+    print('Reading {}.1.edge'.format(mesh_prefix))
 
-    f = open('%s.1.edge'%mesh_prefix)
+    f = open('{}.1.edge'.format(mesh_prefix))
     n_edge = int(f.readline().split()[0])
     edges = np.zeros((n_edge,2),dtype=int)
     edge_flags = np.zeros(n_edge,dtype=int)
@@ -269,14 +182,6 @@ def build_basis2d(nodes,elements):
         A[2,:] = y_node[i,:]
         basis[i,:,:] = np.linalg.inv(A)
         area[i] = np.abs(np.linalg.det(A)/2.0)
-        
-#         print('n_elem',n_elem)
-#         print(x_node[i,:])
-#         print(y_node[i,:])
-#         print(A)
-#         print(basis[i,:,:])
-#         print(area[i])
-#         break
 
     elapsed = time.time()-start
     print('Time elapsed ',elapsed,'sec')
@@ -345,135 +250,44 @@ def build_basis1d(nodes,edges):
 
 
 class Mesh():
-    def __init__(self,mesh_prefix,triangle_path,build_mesh,**kwargs): ##
+    def __init__(self,**kwargs): #avoid long list of inputs
         for key,value in kwargs.items():
             setattr(self,key,value)
-
-        if build_mesh == True:
-            #determine the distance scaling factor
-            radius_b = max(abs(self.cpts[:,0]))
-            height_b = max(abs(self.cpts[:,1]))
-            self.dist_factor = np.power(10,-int(np.log10(radius_b+height_b)))
-            self.dist_factor = 1.0
-
-            #write .poly file that will be used by triangle
-            build_polyfile(mesh_prefix,self.cpts,self.segs,self.holes,
-                           self.zones,self.dist_factor) #wrapped
-
-            #call triangle to generate the mesh
-            call_triangle(mesh_prefix,triangle_path)
-        else:
-            self.dist_factor = 1.0
-        
-        #import nodes, elements, and edges
-        self.nodes,self.node_flags = import_nodes(mesh_prefix)
-        self.elements,self.elem_flags = import_elements(mesh_prefix)
-        self.edges,self.edge_flags = import_edges(mesh_prefix)
-        self.nodes = self.nodes/self.dist_factor
-        self.nodes = self.nodes/1e6 #will be removed
+    
+    @classmethod
+    def build_mesh(cls,**kwargs): #avoid long list of inputs
+        mesh = cls(**kwargs)
+        mesh.dist_factor = 1.0
+        build_polyfile(mesh.prefix,mesh.cpts,mesh.segs,mesh.holes,mesh.zones,
+                       mesh.dist_factor)
+        call_triangle(mesh.prefix,mesh.triangle)
+        mesh.nodes,mesh.node_flags = import_nodes(mesh.prefix)
+        mesh.elements,mesh.elem_flags = import_elements(mesh.prefix)
+        mesh.edges,mesh.edge_flags = import_edges(mesh.prefix)
         print('')
+        mesh.__add_indices()
+        mesh.__add_basis()
+        mesh.__add_mids()
+        mesh.__add_factor()
         
-        #visualize mesh
-        self.visualize()
+        return mesh
+    
+    @classmethod
+    def import_mesh(cls,**kwargs): #avoid long list of inputs
+        mesh = cls(**kwargs)
+        mesh.dist_factor = 1.0
+        mesh.nodes,mesh.node_flags = import_nodes(mesh.prefix)
+        mesh.elements,mesh.elem_flags = import_elements(mesh.prefix)
+        mesh.edges,mesh.edge_flags = import_edges(mesh.prefix)
+        mesh.nodes = mesh.nodes/1e6 #will be removed!!!
+        print('')
+        mesh.__add_indices()
+        mesh.__add_basis()
+        mesh.__add_mids()
+        mesh.__add_factor()
         
-        #define mesh indexing attributes
-        self.in_air = self.elem_flags==Flags.air
-        self.in_water = self.elem_flags==Flags.water
-        self.in_solid = self.elem_flags==Flags.solid
-        self.inside_domain = (self.in_solid|self.in_water)|self.in_air
-
-        self.with_stern = self.edge_flags==Flags.sw_interface
-        self.with_equipotential = self.edge_flags==Flags.equipotential_surf
-        self.with_axis_symmetry = self.edge_flags==Flags.axis_symmetry
-        
-        self.with_top_bound = self.edge_flags==Flags.top_bound
-        self.with_bottom_bound = self.edge_flags==Flags.bottom_bound
-        self.with_left_bound = self.edge_flags==Flags.left_bound
-        self.with_right_bound = self.edge_flags==Flags.right_bound
-        
-        #define more mesh indexing attributes
-        self.on_stern_nodes = np.zeros(len(self.nodes),dtype=bool)
-        self.on_equipotential_nodes = np.zeros(len(self.nodes),dtype=bool)
-        self.on_infinity_nodes = np.zeros(len(self.nodes),dtype=bool)
-        
-        mask = self.with_stern
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
-        self.on_stern_nodes[ind_n] = True
-        
-        mask = self.with_equipotential
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
-        self.on_equipotential_nodes[ind_n] = True
-        
-        mask = self.with_top_bound
-        mask = mask|self.with_bottom_bound
-        mask = mask|self.with_left_bound
-        mask = mask|self.with_right_bound
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
-        self.on_infinity_nodes[ind_n] = True
-        
-        #define mesh indexing for three sets of unused nodes
-        self.on_nodes_outside_domain = np.ones(len(self.nodes),dtype=bool)
-        self.on_nodes_outside_solid = np.ones(len(self.nodes),dtype=bool)
-        self.on_nodes_outside_stern = np.ones(len(self.nodes),dtype=bool)
-        
-        mask = self.inside_domain
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
-        self.on_nodes_outside_domain[ind_n] = False
-        
-        mask = self.in_solid
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
-        self.on_nodes_outside_solid[ind_n] = False
-        
-        mask = self.with_stern
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
-        self.on_nodes_outside_stern[ind_n] = False
-        
-        #compute shape functions for triangular elements
-        n_elem = len(self.elements)
-        self.elem_basis = np.zeros((n_elem,3,3),dtype=float)
-        self.elem_area = np.zeros(n_elem,dtype=float)
-        mask = self.inside_domain
-        basis,area = build_basis2d(self.nodes,self.elements[mask,:])
-        self.elem_basis[mask,:,:] = basis
-        self.elem_area[mask] = area
-
-        #compute shape functions for line segments
-        n_edge = len(self.edges)
-        self.edge_basis = np.zeros((n_edge,2,2),dtype=float)
-        self.edge_len = np.zeros(n_edge,dtype=float)
-        mask = self.edge_flags==Flags.sw_interface
-        basis,length = build_basis1d(self.nodes,self.edges[mask,:])
-        self.edge_basis[mask,:,:] = basis
-        self.edge_len[mask] = length
-
-        #compute middle points of triangular elements
-        self.elem_mids = np.zeros((n_elem,2),dtype=float)
-        x_node = self.nodes[self.elements,0] #(n_elem,3)
-        y_node = self.nodes[self.elements,1] #(n_elem,3)
-        self.elem_mids[:,0] = np.sum(x_node,axis=1)/3.0
-        self.elem_mids[:,1] = np.sum(y_node,axis=1)/3.0
-
-        #compute middle points of line segments
-        self.edge_mids = np.zeros((n_edge,2),dtype=float)
-        x_node = self.nodes[self.edges,0] #(n_edge,2)
-        y_node = self.nodes[self.edges,1] #(n_edge,2)
-        self.edge_mids[:,0] = np.sum(x_node,axis=1)/2.0
-        self.edge_mids[:,1] = np.sum(y_node,axis=1)/2.0
-        
-        #determine the coefficient scaling factor based on the axis of symmetry
-        if self.axis_symmetry=='X':
-            self.node_factor = nodes[:,1]
-            self.elem_factor = elem_mids[:,1]
-            self.edge_factor = edge_mids[:,1] #needs to be verified
-        elif self.axis_symmetry=='Y':
-            self.node_factor = nodes[:,0]
-            self.elem_factor = elem_mids[:,0]
-            self.edge_factor = edge_mids[:,0] #needs to be verified
-        else:
-            self.node_factor = 1.0
-            self.elem_factor = 1.0
-            self.edge_factor = 1.0
-
+        return mesh
+    
     def grad2d(self,f_n):
         print('Computing fields and gradients in elements')
         start = time.time()
@@ -481,74 +295,86 @@ class Mesh():
         n_elem = len(self.elem_mids)
         f_out = np.zeros((n_elem,3),dtype=f_n.dtype)
 
-        f_node = f_n[self.elements] #(n_elem,3)
+        f_in = f_n[self.elements] #(n_elem,3)
         x = self.elem_mids[:,0] #(n_elem,)
         y = self.elem_mids[:,1] #(n_elem,)
         x_r = np.c_[x,x,x] #(n_elem,3)
         y_r = np.c_[y,y,y] #(n_elem,3)
         f_out[:,0] = np.sum((self.elem_basis[:,:,0]+self.elem_basis[:,:,1]*x_r
-                             +self.elem_basis[:,:,2]*y_r)*f_node,axis=1)
-        f_out[:,1] = np.sum(f_node*self.elem_basis[:,:,1],axis=1)
-        f_out[:,2] = np.sum(f_node*self.elem_basis[:,:,2],axis=1)
+                             +self.elem_basis[:,:,2]*y_r)*f_in,axis=1) #wrapped
+        f_out[:,1] = np.sum(f_in*self.elem_basis[:,:,1],axis=1)
+        f_out[:,2] = np.sum(f_in*self.elem_basis[:,:,2],axis=1)
 
         elapsed=time.time()-start
         print('Time elapsed ',elapsed,'sec')
         print('')
 
         return f_out
+
+    def plot(self,f): #plots of colored lines
+        x = self.nodes[self.edges,0]
+        y = self.nodes[self.edges,1]
+        vmin = min(0,min(f))
+        vmax = max(f)
+        cmap = matplotlib.cm.get_cmap('viridis')
+        norm = matplotlib.colors.Normalize(vmin=vmin,vmax=vmax)
+        
+        mask = abs(f)>0
+        custom_cycler = cycler(color=cmap(norm(f[mask])))
+        fig,ax = plt.subplots(figsize=(8,8))
+        ax.set_prop_cycle(custom_cycler)
+        ax.plot(x[mask,:].T,y[mask,:].T)
+        pc = ax.scatter(x[mask,0],y[mask,0],s=2,c=f[mask],
+                        vmin=vmin,vmax=vmax,cmap='viridis') #wrapped
+        fig.colorbar(pc,ax=ax,location='right')
+        ax.set_aspect('equal')
+        xmin,xmax = ax.get_xlim()
+        ymin,ymax = ax.get_ylim()
+        ax.set_xlim(min(xmin,ymin),max(xmax,ymax))
+        ax.set_ylim(min(xmin,ymin),max(xmax,ymax))
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_title('Zero values are shaded')
     
-    def tripcolor(self,f_in):
-        if len(f_in) == len(self.nodes):
+    def scatter(self,f_n): #scatter plots of colored points
+        if len(f_n)==len(self.elements):
+            x = self.elem_mids[:,0]
+            y = self.elem_mids[:,1]
+        elif len(f_n)==len(self.edges):
+            x = self.edge_mids[:,0]
+            y = self.edge_mids[:,1]
+        else:
+            x = self.nodes[:,0]
+            y = self.nodes[:,1]
+
+        fig,ax = plt.subplots(figsize=(8,8))
+        sc = ax.scatter(x,y,s=200,c=f_n,cmap='coolwarm')
+        fig.colorbar(sc,ax=ax,location='right')
+        ax.set_aspect('equal')
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+
+    def tripcolor(self,f_in): #tripcolor plots of colored elements
+        if len(f_in)==len(self.nodes):
             f = self.grad2d(f_in)[:,0]            
         else:
             f = f_in
 
         x = self.nodes[:,0]
-        y = self.nodes[:,1]
-        vmin = min(f)
-        vmax = max(f)
-        
-        fig,ax=plt.subplots()
+        y = self.nodes[:,1]        
+        fig,ax=plt.subplots(figsize=(8,8))
         tpc=ax.tripcolor(x,y,self.elements,facecolors=f,edgecolor='none',
-                         vmin=vmin,vmax=vmax,cmap='jet')
+                         vmin=min(f),vmax=max(f),cmap='jet') #wrapped
         fig.colorbar(tpc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         plt.show()
     
-    def contour(self,f_in): #plot colored lines
-        pass
-    
-    def scatter(self,mask): #scatter of colored points
-#         on_selected_nodes = np.zeros(len(self.nodes),dtype=bool)
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
-#         on_selected_nodes[ind_n] = True
-
-        fig,ax = plt.subplots(figsize=(8,8))
-        x = self.nodes[:,0]
-        y = self.nodes[:,1]
-        ax.triplot(x,y,self.elements[:,:],linewidth=0.2,
-                   color='tab:blue',alpha=0.5) #wrapped
-        ax.plot(x[ind_n],y[ind_n],'.',color='tab:orange')
-        ax.set_xlabel('X (m)')
-        ax.set_ylabel('Y (m)')
-
-    def scatter2(self,ind_n): #scatter of colored points
-        fig,ax = plt.subplots(figsize=(8,8))
-        x = self.nodes[:,0]
-        y = self.nodes[:,1]
-        ax.triplot(x,y,self.elements[:,:],linewidth=0.2,
-                   color='tab:blue',alpha=0.5) #wrapped
-        ax.plot(x[ind_n],y[ind_n],'.',color='tab:orange')
-        ax.set_xlabel('X (m)')
-        ax.set_ylabel('Y (m)')
-
-    
     def visualize(self,elem_flag_list=[],edge_flag_list=[],xlim=[],ylim=[]):
-        print('THE NUMBER OF NODES IS: %d'%len(self.nodes))
-        print('THE NUMBER OF ELEMENTS IS: %d'%len(self.elements))
-        print('THE NUMBER OF EDGES IS: %d'%len(self.edges))
+        print('THE NUMBER OF NODES IS: {0:6.0F}'.format(len(self.nodes)))
+        print('THE NUMBER OF ELEMENTS IS: {0:6.0F}'.format(len(self.elements)))
+        print('THE NUMBER OF EDGES IS: {0:6.0F}'.format(len(self.edges)))
         print('')
         print('node_flags',np.unique(self.node_flags))
         print('elem_flags',np.unique(self.elem_flags))
@@ -590,17 +416,246 @@ class Mesh():
         if len(ylim)==2:
             ax.set_ylim(ylim)
 
-        plt.show()
+        plt.show()        
 
+    def __add_indices(self):
+        #define basic mesh indexing attributes
+        self.is_in_air = self.elem_flags==Flags.air
+        self.is_in_water = self.elem_flags==Flags.water
+        self.is_in_solid = self.elem_flags==Flags.solid
+        self.inside_domain = (self.is_in_solid|self.is_in_water)|self.is_in_air
+
+        self.is_with_stern = self.edge_flags==Flags.sw_interface
+        self.is_with_equipotential = self.edge_flags==Flags.equipotential_surf
+        self.is_with_axis_symmetry = self.edge_flags==Flags.axis_symmetry
+        
+        self.is_with_top_bound = self.edge_flags==Flags.top_bound
+        self.is_with_bottom_bound = self.edge_flags==Flags.bottom_bound
+        self.is_with_left_bound = self.edge_flags==Flags.left_bound
+        self.is_with_right_bound = self.edge_flags==Flags.right_bound
+        
+        #define advanced mesh indexing attributes (default False)
+        self.is_on_air = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_water = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_solid = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_stern = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_equipotential = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_top_bound = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_bottom_bound = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_left_bound = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_right_bound = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_outer_bound = np.zeros(len(self.nodes),dtype=bool)
+
+        #define advanced mesh indexing attributes (default True)
+        self.is_on_outside_domain = np.ones(len(self.nodes),dtype=bool)
+        self.is_on_outside_solid = np.ones(len(self.nodes),dtype=bool)
+        self.is_on_outside_stern = np.ones(len(self.nodes),dtype=bool)
+        
+        #define alias
+        self.is_on_mixed_bound = self.is_on_stern
+        self.is_on_inner_bound = self.is_on_equipotential
+
+        #compute advanced mesh indexing attributes (change to True)
+        mask = self.is_in_air
+        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        self.is_on_air[ind_n] = True
+        
+        mask = self.is_in_water
+        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        self.is_on_water[ind_n] = True
+
+        mask = self.is_in_solid
+        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        self.is_on_solid[ind_n] = True
+
+        mask = self.is_with_stern
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_stern[ind_n] = True
+        
+        mask = self.is_with_equipotential
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_equipotential[ind_n] = True
+        
+        mask = self.is_with_top_bound
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_top_bound[ind_n] = True
+
+        mask = self.is_with_bottom_bound
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_bottom_bound[ind_n] = True
+        
+        mask = self.is_with_left_bound
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_left_bound[ind_n] = True
+
+        mask = self.is_with_right_bound
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_right_bound[ind_n] = True
+
+        mask = self.is_with_top_bound
+        mask = mask|self.is_with_bottom_bound
+        mask = mask|self.is_with_left_bound
+        mask = mask|self.is_with_right_bound
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_outer_bound[ind_n] = True
+        
+        #compute advanced mesh indexing attributes (change to False)
+        mask = self.inside_domain
+        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        self.is_on_outside_domain[ind_n] = False
+        
+        mask = self.is_in_solid
+        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        self.is_on_outside_solid[ind_n] = False
+        
+        mask = self.is_with_stern
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_outside_stern[ind_n] = False
+    
+    def __add_basis(self):  
+        n_elem = len(self.elements)
+        n_edge = len(self.edges)
+        self.elem_basis = np.zeros((n_elem,3,3),dtype=float)
+        self.elem_area = np.zeros(n_elem,dtype=float)
+        self.edge_basis = np.zeros((n_edge,2,2),dtype=float)
+        self.edge_len = np.zeros(n_edge,dtype=float)
+        
+        #compute shape functions for triangular elements
+        mask = self.inside_domain
+        basis,area = build_basis2d(self.nodes,self.elements[mask,:])
+        self.elem_basis[mask,:,:] = basis
+        self.elem_area[mask] = area
+
+        #compute shape functions for line segments
+        mask = self.is_with_stern
+        basis,length = build_basis1d(self.nodes,self.edges[mask,:])
+        self.edge_basis[mask,:,:] = basis
+        self.edge_len[mask] = length
+    
+    def __add_mids(self):
+        n_elem = len(self.elements)
+        n_edge = len(self.edges)
+        self.elem_mids = np.zeros((n_elem,2),dtype=float)
+        self.edge_mids = np.zeros((n_edge,2),dtype=float)
+        
+        #compute middle points of triangular elements
+        x = self.nodes[self.elements,0] #(n_elem,3)
+        y = self.nodes[self.elements,1] #(n_elem,3)
+        self.elem_mids[:,0] = np.sum(x,axis=1)/3.0
+        self.elem_mids[:,1] = np.sum(y,axis=1)/3.0
+
+        #compute middle points of line segments
+        x = self.nodes[self.edges,0] #(n_edge,2)
+        y = self.nodes[self.edges,1] #(n_edge,2)
+        self.edge_mids[:,0] = np.sum(x,axis=1)/2.0
+        self.edge_mids[:,1] = np.sum(y,axis=1)/2.0
+    
+    def __add_factor(self):
+        #determine the coefficient scaling factor based on the axis of symmetry
+        if self.axis_symmetry=='X':
+            self.node_factor = self.nodes[:,1]
+            self.elem_factor = self.elem_mids[:,1]
+            self.edge_factor = self.edge_mids[:,1] #needs to be verified
+        elif self.axis_symmetry=='Y':
+            self.node_factor = self.nodes[:,0]
+            self.elem_factor = self.elem_mids[:,0]
+            self.edge_factor = self.edge_mids[:,0] #needs to be verified
+        else:
+            self.node_factor = 1.0
+            self.elem_factor = 1.0
+            self.edge_factor = 1.0
 
 class Geometry():
-    def __init__(self,shape,**kwargs): #avoid long list of inputs
+    def __init__(self,**kwargs): #avoid long list of inputs
         for key,value in kwargs.items():
             setattr(self,key,value)
+    
+    @classmethod
+    def build_slab(cls,**kwargs): #avoid long list of inputs
+        slab = cls(**kwargs)
 
-        if shape=='slab':
-            self.cpts,self.segs,self.holes,self.zones = build_slab(self)
-            self.visualize()
+        #define size of the bounding box
+        radius_b = max(slab.radius_air,slab.radius_water,slab.radius_solid)
+        height_b = max(slab.height_air,slab.height_water,slab.height_solid)
+        height_water = slab.height_water
+
+        #define control points, line segments, holes, and zone constraints
+        cpts = np.zeros((0,3),dtype=float) #x/y/z of control points
+        segs = np.zeros((0,3),dtype=int) #ind_a/ind_b/flag of lines
+        holes = np.zeros((0,2),dtype=float) #x/y of holes
+        zones = np.zeros((0,3),dtype=float) #x/y/area of zone constraints
+
+        #define holes and zone constraints
+        if height_water<height_b:
+            x = np.r_[0.0,0.0,0.0] #solid/water/air
+            y = np.r_[-height_b,height_water,height_water*2+height_b]/2.0
+            area = np.r_[1.0,1.0,1.0]*(radius_b/20.0)**2
+            zones = np.r_[zones,np.c_[x,y,area]]
+        else:
+            x = np.r_[0.0,0.0] #solid/water
+            y = np.r_[-height_b,height_water]/2.0
+            area = np.r_[1.0,1.0]*(radius_b/20.0)**2
+            zones = np.r_[zones,np.c_[x,y,area]]
+
+        #define the outer boundary box
+        x = np.r_[-radius_b,radius_b,radius_b,-radius_b]
+        y = np.r_[-height_b,-height_b,height_b,height_b]
+        cpts = np.r_[cpts,np.c_[x,y,np.ones_like(x)*1]]
+
+        #define the solid-water interface
+        x = np.r_[-radius_b,radius_b]
+        y = np.r_[0.0,0.0]
+        cpts = np.r_[cpts,np.c_[x,y,np.ones_like(x)*1]]
+
+        #define the air-water interface
+        if height_water<height_b:
+            x = np.r_[-radius_b,radius_b]
+            y = np.r_[height_water,height_water]
+            cpts = np.r_[cpts,np.c_[x,y,np.ones_like(x)*1]]
+
+        #define the segments on the bottom boundary
+        x = np.r_[-radius_b,radius_b]
+        y = np.r_[-height_b,-height_b]
+        edges,edge_flags = search_edges(cpts,x,y,Flags.bottom_bound)
+        segs = np.r_[segs,np.c_[edges,edge_flags]]
+
+        #define the segments on the right boundary
+        x = np.r_[radius_b,radius_b,radius_b]
+        y = np.r_[-height_b,height_water,height_b]
+        edges,edge_flags = search_edges(cpts,x,y,Flags.right_bound)
+        segs = np.r_[segs,np.c_[edges,edge_flags]]
+
+        #define the segments on the top boundary
+        x = np.r_[-radius_b,radius_b]
+        y = np.r_[height_b,height_b]
+        edges,edge_flags = search_edges(cpts,x,y,Flags.top_bound)
+        segs = np.r_[segs,np.c_[edges,edge_flags]]
+
+        #define the segments on the left boundary
+        x = np.r_[-radius_b,-radius_b,-radius_b]
+        y = np.r_[-height_b,height_water,height_b]
+        edges,edge_flags = search_edges(cpts,x,y,Flags.left_bound)
+        segs = np.r_[segs,np.c_[edges,edge_flags]]
+
+        #define the segments on the solid-water interface
+        x = np.r_[-radius_b,radius_b]
+        y = np.r_[0.0,0.0]
+        edges,edge_flags = search_edges(cpts,x,y,Flags.sw_interface)
+        segs = np.r_[segs,np.c_[edges,edge_flags]]
+
+        #define the segments on the air-water interface
+        if height_water<height_b:
+            x = np.r_[-radius_b,radius_b]
+            y = np.r_[height_water,height_water]
+            edges,edge_flags = search_edges(cpts,x,y,Flags.aw_interface)
+            segs = np.r_[segs,np.c_[edges,edge_flags]]
+        
+        slab.cpts = cpts
+        slab.segs = segs
+        slab.holes = holes
+        slab.zones = zones
+        
+        return slab
 
     def visualize(self):
         fig,ax = plt.subplots(figsize=(4,4))
@@ -612,32 +667,4 @@ class Geometry():
         ax.set_ylabel('Y (m)')
         ax.set_title('Zoom-out')
         plt.show()
-
-
-# class Physics():
-#     def __init__(self,**kwargs): #avoid long list of inputs
-#         for key,value in kwargs.items():
-#             setattr(self,key,value)
-
-#         self.C_ion = [val*Consts.a for val in self.c_ion]
-#         self.Q_ion = [val*Consts.e for val in self.z_ion]
-#         self.Diff_a = [val*Consts.k*self.temperature/Consts.e
-#                        for val in self.mu_a] #wrapped
-#         self.Diff_s = self.mu_s*Consts.k*self.temperature/Consts.e
-#         self.perm_a = self.rel_perm_a*Consts.epsilon_0
-#         self.perm_i = self.rel_perm_i*Consts.epsilon_0
-        
-#         n_ion = len(self.c_ion)
-#         self.lambda_d = [0.0]*n_ion
-#         for i in range(n_ion):
-#             dl = np.sqrt(self.perm_a*Consts.k*self.temperature/2
-#                          /self.Q_ion[i]/self.Q_ion[i]/self.C_ion[i]) #wrapped
-#             self.lambda_d[i] = dl
-
-
-# class Survey():
-#     def __init__(self,**kwargs): #avoid long list of inputs
-#         for key,value in kwargs.items():
-#             setattr(self,key,value)
-
 
