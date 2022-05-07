@@ -2,6 +2,7 @@ import numpy as np
 import subprocess,time
 
 from cycler import cycler
+from typing import Type
 import matplotlib
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-poster')
@@ -141,7 +142,7 @@ def import_edges(mesh_prefix):
     return edges,edge_flags
 
 
-def search_edges(nodes,x,y,flag):
+def find_edges(nodes,x,y,flag):
     edges = np.zeros((len(x)-1,2),dtype=int)
     edge_flags = np.zeros(len(x)-1,dtype=int)
     for i in range(len(x)-1):
@@ -255,7 +256,7 @@ class Mesh():
             setattr(self,key,value)
     
     @classmethod
-    def build_mesh(cls,**kwargs): #avoid long list of inputs
+    def builder(cls,**kwargs): #avoid long list of inputs
         mesh = cls(**kwargs)
         mesh.dist_factor = 1.0
         build_polyfile(mesh.prefix,mesh.cpts,mesh.segs,mesh.holes,mesh.zones,
@@ -265,15 +266,15 @@ class Mesh():
         mesh.elements,mesh.elem_flags = import_elements(mesh.prefix)
         mesh.edges,mesh.edge_flags = import_edges(mesh.prefix)
         print('')
-        mesh.__add_indices()
-        mesh.__add_basis()
-        mesh.__add_mids()
-        mesh.__add_factor()
+        mesh._set_inds()
+        mesh._set_basis()
+        mesh._set_mids()
+        mesh._set_rot_factor()
         
         return mesh
     
     @classmethod
-    def import_mesh(cls,**kwargs): #avoid long list of inputs
+    def importer(cls,**kwargs): #avoid long list of inputs
         mesh = cls(**kwargs)
         mesh.dist_factor = 1.0
         mesh.nodes,mesh.node_flags = import_nodes(mesh.prefix)
@@ -281,13 +282,13 @@ class Mesh():
         mesh.edges,mesh.edge_flags = import_edges(mesh.prefix)
         mesh.nodes = mesh.nodes/1e6 #will be removed!!!
         print('')
-        mesh.__add_indices()
-        mesh.__add_basis()
-        mesh.__add_mids()
-        mesh.__add_factor()
-        
+        mesh._set_inds()
+        mesh._set_basis()
+        mesh._set_mids()
+        mesh._set_rot_factor()
+
         return mesh
-    
+        
     def grad2d(self,f_n):
         print('Computing fields and gradients in elements')
         start = time.time()
@@ -371,7 +372,7 @@ class Mesh():
         ax.set_ylabel('Y (m)')
         plt.show()
     
-    def visualize(self,elem_flag_list=[],edge_flag_list=[],xlim=[],ylim=[]):
+    def visualize(self,elem_flags=[],edge_flags=[],xlim=[],ylim=[]):
         print('THE NUMBER OF NODES IS: {0:6.0F}'.format(len(self.nodes)))
         print('THE NUMBER OF ELEMENTS IS: {0:6.0F}'.format(len(self.elements)))
         print('THE NUMBER OF EDGES IS: {0:6.0F}'.format(len(self.edges)))
@@ -391,8 +392,8 @@ class Mesh():
         ax.set_ylabel('Y (m)')
 
         #plot specified elements
-        for i in range(len(elem_flag_list)):
-            mask = self.elem_flags==elem_flag_list[i]
+        for i in range(len(elem_flags)):
+            mask = self.elem_flags==elem_flags[i]
             if np.sum(mask)>0:
                 ax.triplot(x,y,self.elements[mask,:],linewidth=0.2,
                            color='tab:blue',alpha=1.0) #wrapped
@@ -406,9 +407,9 @@ class Mesh():
                 ax.plot(x[mask,:].T,y[mask,:].T,color='tab:orange',alpha=0.2)
         
         #plot specified edges
-        for i in range(len(edge_flag_list)):
-            mask = self.edge_flags==edge_flag_list[i]
-            ax.plot(x[mask,:].T,y[mask,:].T,color='tab:orange')
+        for i in range(len(edge_flags)):
+            mask = self.edge_flags==edge_flags[i]
+            ax.plot(x[mask,:].T,y[mask,:].T,color='tab:orange',alpha=1.0)
 
         if len(xlim)==2:
             ax.set_xlim(xlim)
@@ -416,14 +417,14 @@ class Mesh():
         if len(ylim)==2:
             ax.set_ylim(ylim)
 
-        plt.show()        
+        plt.show()
 
-    def __add_indices(self):
+    def _set_inds(self):
         #define basic mesh indexing attributes
         self.is_in_air = self.elem_flags==Flags.air
         self.is_in_water = self.elem_flags==Flags.water
         self.is_in_solid = self.elem_flags==Flags.solid
-        self.inside_domain = (self.is_in_solid|self.is_in_water)|self.is_in_air
+        self.is_inside_domain = (self.is_in_solid|self.is_in_water)|self.is_in_air
 
         self.is_with_stern = self.edge_flags==Flags.sw_interface
         self.is_with_equipotential = self.edge_flags==Flags.equipotential_surf
@@ -438,6 +439,7 @@ class Mesh():
         self.is_on_air = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_water = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_solid = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_inside_domain = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_stern = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_equipotential = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_top_bound = np.zeros(len(self.nodes),dtype=bool)
@@ -448,11 +450,12 @@ class Mesh():
 
         #define advanced mesh indexing attributes (default True)
         self.is_on_outside_domain = np.ones(len(self.nodes),dtype=bool)
-        self.is_on_outside_solid = np.ones(len(self.nodes),dtype=bool)
+        self.is_on_outside_water = np.ones(len(self.nodes),dtype=bool)
         self.is_on_outside_stern = np.ones(len(self.nodes),dtype=bool)
         
         #define alias
-        self.is_on_mixed_bound = self.is_on_stern
+        self.is_with_mixed_bound = self.is_with_stern
+        self.is_on_metal_bound = self.is_on_stern
         self.is_on_inner_bound = self.is_on_equipotential
 
         #compute advanced mesh indexing attributes (change to True)
@@ -467,6 +470,10 @@ class Mesh():
         mask = self.is_in_solid
         ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
         self.is_on_solid[ind_n] = True
+        
+        mask = self.is_inside_domain
+        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        self.is_on_inside_domain[ind_n] = True
 
         mask = self.is_with_stern
         ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
@@ -500,19 +507,19 @@ class Mesh():
         self.is_on_outer_bound[ind_n] = True
         
         #compute advanced mesh indexing attributes (change to False)
-        mask = self.inside_domain
+        mask = self.is_inside_domain
         ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
         self.is_on_outside_domain[ind_n] = False
         
-        mask = self.is_in_solid
+        mask = self.is_in_water
         ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
-        self.is_on_outside_solid[ind_n] = False
+        self.is_on_outside_water[ind_n] = False
         
         mask = self.is_with_stern
         ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
         self.is_on_outside_stern[ind_n] = False
     
-    def __add_basis(self):  
+    def _set_basis(self):  
         n_elem = len(self.elements)
         n_edge = len(self.edges)
         self.elem_basis = np.zeros((n_elem,3,3),dtype=float)
@@ -521,7 +528,7 @@ class Mesh():
         self.edge_len = np.zeros(n_edge,dtype=float)
         
         #compute shape functions for triangular elements
-        mask = self.inside_domain
+        mask = self.is_inside_domain
         basis,area = build_basis2d(self.nodes,self.elements[mask,:])
         self.elem_basis[mask,:,:] = basis
         self.elem_area[mask] = area
@@ -532,7 +539,7 @@ class Mesh():
         self.edge_basis[mask,:,:] = basis
         self.edge_len[mask] = length
     
-    def __add_mids(self):
+    def _set_mids(self):
         n_elem = len(self.elements)
         n_edge = len(self.edges)
         self.elem_mids = np.zeros((n_elem,2),dtype=float)
@@ -550,7 +557,7 @@ class Mesh():
         self.edge_mids[:,0] = np.sum(x,axis=1)/2.0
         self.edge_mids[:,1] = np.sum(y,axis=1)/2.0
     
-    def __add_factor(self):
+    def _set_rot_factor(self):
         #determine the coefficient scaling factor based on the axis of symmetry
         if self.axis_symmetry=='X':
             self.node_factor = self.nodes[:,1]
@@ -565,13 +572,13 @@ class Mesh():
             self.elem_factor = 1.0
             self.edge_factor = 1.0
 
-class Geometry():
+class Complex():
     def __init__(self,**kwargs): #avoid long list of inputs
         for key,value in kwargs.items():
             setattr(self,key,value)
     
     @classmethod
-    def build_slab(cls,**kwargs): #avoid long list of inputs
+    def init_slab(cls,**kwargs): #avoid long list of inputs
         slab = cls(**kwargs)
 
         #define size of the bounding box
@@ -616,38 +623,38 @@ class Geometry():
         #define the segments on the bottom boundary
         x = np.r_[-radius_b,radius_b]
         y = np.r_[-height_b,-height_b]
-        edges,edge_flags = search_edges(cpts,x,y,Flags.bottom_bound)
+        edges,edge_flags = find_edges(cpts,x,y,Flags.bottom_bound)
         segs = np.r_[segs,np.c_[edges,edge_flags]]
 
         #define the segments on the right boundary
         x = np.r_[radius_b,radius_b,radius_b]
         y = np.r_[-height_b,height_water,height_b]
-        edges,edge_flags = search_edges(cpts,x,y,Flags.right_bound)
+        edges,edge_flags = find_edges(cpts,x,y,Flags.right_bound)
         segs = np.r_[segs,np.c_[edges,edge_flags]]
 
         #define the segments on the top boundary
         x = np.r_[-radius_b,radius_b]
         y = np.r_[height_b,height_b]
-        edges,edge_flags = search_edges(cpts,x,y,Flags.top_bound)
+        edges,edge_flags = find_edges(cpts,x,y,Flags.top_bound)
         segs = np.r_[segs,np.c_[edges,edge_flags]]
 
         #define the segments on the left boundary
         x = np.r_[-radius_b,-radius_b,-radius_b]
         y = np.r_[-height_b,height_water,height_b]
-        edges,edge_flags = search_edges(cpts,x,y,Flags.left_bound)
+        edges,edge_flags = find_edges(cpts,x,y,Flags.left_bound)
         segs = np.r_[segs,np.c_[edges,edge_flags]]
 
         #define the segments on the solid-water interface
         x = np.r_[-radius_b,radius_b]
         y = np.r_[0.0,0.0]
-        edges,edge_flags = search_edges(cpts,x,y,Flags.sw_interface)
+        edges,edge_flags = find_edges(cpts,x,y,Flags.sw_interface)
         segs = np.r_[segs,np.c_[edges,edge_flags]]
 
         #define the segments on the air-water interface
         if height_water<height_b:
             x = np.r_[-radius_b,radius_b]
             y = np.r_[height_water,height_water]
-            edges,edge_flags = search_edges(cpts,x,y,Flags.aw_interface)
+            edges,edge_flags = find_edges(cpts,x,y,Flags.aw_interface)
             segs = np.r_[segs,np.c_[edges,edge_flags]]
         
         slab.cpts = cpts
