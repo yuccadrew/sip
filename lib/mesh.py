@@ -1,12 +1,11 @@
 import numpy as np
-import subprocess,time
-
-from cycler import cycler
-from typing import Type
+import subprocess
+import time
 import matplotlib
+from cycler import cycler
+
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-poster')
-
 
 class Flags():
     pass
@@ -322,7 +321,7 @@ class Mesh():
         
         mask = abs(f)>0
         custom_cycler = cycler(color=cmap(norm(f[mask])))
-        fig,ax = plt.subplots(figsize=(8,8))
+        fig,ax = plt.subplots(figsize=(10,8))
         ax.set_prop_cycle(custom_cycler)
         ax.plot(x[mask,:].T,y[mask,:].T)
         pc = ax.scatter(x[mask,0],y[mask,0],s=2,c=f[mask],
@@ -348,24 +347,30 @@ class Mesh():
             x = self.nodes[:,0]
             y = self.nodes[:,1]
 
-        fig,ax = plt.subplots(figsize=(8,8))
+        fig,ax = plt.subplots(figsize=(10,8))
         sc = ax.scatter(x,y,s=200,c=f_n,cmap='coolwarm')
         fig.colorbar(sc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
 
-    def tripcolor(self,f_in): #tripcolor plots of colored elements
+    def tripcolor(self,f_in,vmin=[],vmax=[]): #tripcolor plots of colored elements
         if len(f_in)==len(self.nodes):
             f = self.grad2d(f_in)[:,0]            
         else:
             f = f_in
+        
+        if vmin==[]:
+            vmin = min(f)
+        
+        if vmax==[]:
+            vmax = max(f)
 
         x = self.nodes[:,0]
         y = self.nodes[:,1]        
-        fig,ax=plt.subplots(figsize=(8,8))
+        fig,ax=plt.subplots(figsize=(10,8))
         tpc=ax.tripcolor(x,y,self.elements,facecolors=f,edgecolor='none',
-                         vmin=min(f),vmax=max(f),cmap='jet') #wrapped
+                         vmin=vmin,vmax=vmax,cmap='jet') #wrapped
         fig.colorbar(tpc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
@@ -383,11 +388,12 @@ class Mesh():
         print('')
 
         #plot all triangles in the background
-        fig,ax = plt.subplots(figsize=(8,8))
+        fig,ax = plt.subplots(figsize=(10,8))
         x = self.nodes[:,0]
         y = self.nodes[:,1]
         ax.triplot(x,y,self.elements[:,:],linewidth=0.2,
                    color='tab:blue',alpha=0.5) #wrapped
+        ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
 
@@ -665,11 +671,12 @@ class Complex():
         return slab
 
     def visualize(self):
-        fig,ax = plt.subplots(figsize=(4,4))
+        fig,ax = plt.subplots(figsize=(5,4))
         x = self.cpts[self.segs[:,:-1],0]
         y = self.cpts[self.segs[:,:-1],1]
         ax.plot(x.T,y.T,'-',color='tab:blue')
         ax.plot(self.cpts[:,0],self.cpts[:,1],'.',color='tab:orange')
+        ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_title('Zoom-out')
