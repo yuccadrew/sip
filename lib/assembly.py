@@ -438,4 +438,76 @@ class FEM():
         self.robin = robin
         self.dirichlet = dirichlet
         self.sol = solve_system(K,b)
+    
+class StaticFEM():
+    def __init__(self,mesh,pde):
+        sigma_diffuse = -0.1 #will add ratio and iteration
+        
+        domain = Domain(mesh,pde)
+        stern = Stern(mesh,pde)
+        robin = Robin(mesh,pde)
+        dirichlet = Dirichlet(mesh,pde)
+        
+        domain.K1,domain.K2,domain.b1,domain.b2 = assemble_Ke2d(mesh,domain)
+        stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
+        robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
+        
+        K = domain.K1+domain.K2+stern.K1+stern.K2+robin.K1+robin.K2
+        b = (domain.b1+domain.b2+stern.b1*sigma_diffuse+stern.b2
+             +robin.b1+robin.b2)
+        K,b = set_first_kind_bc(dirichlet,K,b)
+        
+        self.mesh = mesh
+        self.pde = pde
+        self.domain = domain
+        self.stern = stern
+        self.robin = robin
+        self.dirichlet = dirichlet
+        self.sol = np.reshape(solve_system(K,b),(len(mesh.nodes),-1))
 
+
+class PerturbFEM():
+    def __init__(self,mesh,pde):
+        ratio = [1.0]
+        freq = [3e4]
+        sigma_solid = -0.01
+        n_node = len(mesh.nodes)
+        n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
+        
+        domain = Domain(mesh,pde)
+        stern = Stern(mesh,pde)
+        robin = Robin(mesh,pde)
+        dirichlet = Dirichlet(mesh,pde)
+
+        domain.K1,domain.K2,domain.b1,domain.b2 = assemble_Ke2d(mesh,domain)
+        stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
+        robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
+        
+        for i in range(len(ratio)):
+            #sigma_stern and sigma_diffuse are not used because is_solid_metal
+            #is True
+            sigma_stern = -ratio[i]*sigma_solid
+            sigma_diffuse = -(1.0-ratio[i])*sigma_solid #0 if ratio is 1.0
+        
+            #placeholder to update domain and static solution
+            
+            for j in range(len(freq)):
+                diag = np.ones((n_node,n_rep),dtype=complex)
+                diag[:,:-2] = 1j*freq[j]
+                diag = sparse.diags(diag.flatten(order='C'))
+            
+                K = (domain.K1+diag.dot(domain.K2)
+                     +stern.K1+stern.K2
+                     +robin.K1+robin.K2)
+                b = (domain.b1+domain.b2
+                     +stern.b1+stern.b2
+                     +robin.b1+robin.b2)+0j #need to bemodified to include sigma_stern
+                K,b = set_first_kind_bc(dirichlet,K,b)
+
+        self.mesh = mesh
+        self.pde = pde
+        self.domain = domain
+        self.stern = stern
+        self.robin = robin
+        self.dirichlet = dirichlet
+        self.sol = np.reshape(solve_system(K,b),(len(mesh.nodes),-1))

@@ -279,7 +279,7 @@ class Mesh():
         mesh.nodes,mesh.node_flags = import_nodes(mesh.prefix)
         mesh.elements,mesh.elem_flags = import_elements(mesh.prefix)
         mesh.edges,mesh.edge_flags = import_edges(mesh.prefix)
-        mesh.nodes = mesh.nodes/1e6 #will be removed!!!
+        mesh.nodes = mesh.nodes*mesh.unscale_factor #will be removed!!!
         print('')
         mesh._set_inds()
         mesh._set_basis()
@@ -311,12 +311,12 @@ class Mesh():
 
         return f_out
 
-    def plot(self,f): #plots of colored lines
+    def plot(self,f,cmap='viridis'): #plots of colored lines
         x = self.nodes[self.edges,0]
         y = self.nodes[self.edges,1]
         vmin = min(0,min(f))
         vmax = max(f)
-        cmap = matplotlib.cm.get_cmap('viridis')
+        cmap = matplotlib.cm.get_cmap(cmap)
         norm = matplotlib.colors.Normalize(vmin=vmin,vmax=vmax)
         
         mask = abs(f)>0
@@ -325,7 +325,7 @@ class Mesh():
         ax.set_prop_cycle(custom_cycler)
         ax.plot(x[mask,:].T,y[mask,:].T)
         pc = ax.scatter(x[mask,0],y[mask,0],s=2,c=f[mask],
-                        vmin=vmin,vmax=vmax,cmap='viridis') #wrapped
+                        vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
         fig.colorbar(pc,ax=ax,location='right')
         ax.set_aspect('equal')
         xmin,xmax = ax.get_xlim()
@@ -336,7 +336,7 @@ class Mesh():
         ax.set_ylabel('Y (m)')
         ax.set_title('Zero values are shaded')
     
-    def scatter(self,f_n): #scatter plots of colored points
+    def scatter(self,f_n,cmap='coolwarm'): #scatter plots of colored points
         if len(f_n)==len(self.elements):
             x = self.elem_mids[:,0]
             y = self.elem_mids[:,1]
@@ -348,15 +348,15 @@ class Mesh():
             y = self.nodes[:,1]
 
         fig,ax = plt.subplots(figsize=(10,8))
-        sc = ax.scatter(x,y,s=200,c=f_n,cmap='coolwarm')
+        sc = ax.scatter(x,y,s=200,c=f_n,cmap=cmap)
         fig.colorbar(sc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
 
-    def tripcolor(self,f_in,vmin=[],vmax=[]): #tripcolor plots of colored elements
+    def tripcolor(self,f_in,vmin=[],vmax=[],cmap='YlGnBu'): #plots in elements
         if len(f_in)==len(self.nodes):
-            f = self.grad2d(f_in)[:,0]            
+            f = self.grad2d(f_in)[:,0]
         else:
             f = f_in
         
@@ -370,11 +370,20 @@ class Mesh():
         y = self.nodes[:,1]        
         fig,ax=plt.subplots(figsize=(10,8))
         tpc=ax.tripcolor(x,y,self.elements,facecolors=f,edgecolor='none',
-                         vmin=vmin,vmax=vmax,cmap='jet') #wrapped
+                         vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
         fig.colorbar(tpc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
+        
+        if self.axis_symmetry=='X':
+            tpc=ax.tripcolor(x,-y,self.elements,facecolors=f,edgecolor='none',
+                             vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
+
+        if self.axis_symmetry=='Y':
+            tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,edgecolor='none',
+                             vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
+
         plt.show()
     
     def visualize(self,elem_flags=[],edge_flags=[],xlim=[],ylim=[]):
@@ -396,6 +405,14 @@ class Mesh():
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
+        
+        if self.axis_symmetry=='X':
+            ax.triplot(x,-y,self.elements[:,:],linewidth=0.2,
+                       color='tab:blue',alpha=0.25) #wrapped
+        
+        if self.axis_symmetry=='Y':
+            ax.triplot(-x,y,self.elements[:,:],linewidth=0.2,
+                       color='tab:blue',alpha=0.25) #wrapped
 
         #plot specified elements
         for i in range(len(elem_flags)):
@@ -407,9 +424,9 @@ class Mesh():
         #plot all edges in the background
         x = self.nodes[self.edges,0]
         y = self.nodes[self.edges,1]
-        for key in Flags.__dict__.keys():
-            if not '__' in key:
-                mask = self.edge_flags==Flags.__dict__[key]
+        for attr in Flags.__dict__.keys():
+            if not '__' in attr:
+                mask = self.edge_flags==Flags.__dict__[attr]
                 ax.plot(x[mask,:].T,y[mask,:].T,color='tab:orange',alpha=0.2)
         
         #plot specified edges
