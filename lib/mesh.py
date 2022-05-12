@@ -336,7 +336,7 @@ class Mesh():
         ax.set_ylabel('Y (m)')
         ax.set_title('Zero values are shaded')
     
-    def scatter(self,f_n,cmap='coolwarm'): #scatter plots of colored points
+    def scatter(self,f_n,xlim=[],ylim=[],cmap='coolwarm'): #scatter plots of colored points
         if len(f_n)==len(self.elements):
             x = self.elem_mids[:,0]
             y = self.elem_mids[:,1]
@@ -354,7 +354,16 @@ class Mesh():
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
 
-    def tripcolor(self,f_in,vmin=[],vmax=[],cmap='YlGnBu'): #plots in elements
+        if len(xlim)==2:
+            ax.set_xlim(xlim)
+
+        if len(ylim)==2:
+            ax.set_ylim(ylim)
+
+        plt.show()
+
+    def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],cmap='YlGnBu',
+                  logscale=False): #wrapped #tripcolor plots of colored elements
         if len(f_in)==len(self.nodes):
             f = self.grad2d(f_in)[:,0]
         else:
@@ -365,24 +374,35 @@ class Mesh():
         
         if vmax==[]:
             vmax = max(f)
+        
+        if logscale:
+            norm = matplotlib.colors.LogNorm(vmin,vmax)
+            parser = {'edgecolor':'none','cmap':cmap,'norm':norm}
+        else:
+            norm = None
+            parser = {'edgecolor':'none','cmap':cmap,'norm':norm,
+                      'vmin':vmin,'vmax':vmax}
 
         x = self.nodes[:,0]
         y = self.nodes[:,1]        
         fig,ax=plt.subplots(figsize=(10,8))
-        tpc=ax.tripcolor(x,y,self.elements,facecolors=f,edgecolor='none',
-                         vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
+        tpc=ax.tripcolor(x,y,self.elements,facecolors=f,**parser) #wrapped
         fig.colorbar(tpc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         
         if self.axis_symmetry=='X':
-            tpc=ax.tripcolor(x,-y,self.elements,facecolors=f,edgecolor='none',
-                             vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
+            tpc=ax.tripcolor(x,-y,self.elements,facecolors=f,**parser) #wrapped
 
         if self.axis_symmetry=='Y':
-            tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,edgecolor='none',
-                             vmin=vmin,vmax=vmax,cmap=cmap) #wrapped
+            tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,**parser) #wrapped
+
+        if len(xlim)==2:
+            ax.set_xlim(xlim)
+
+        if len(ylim)==2:
+            ax.set_ylim(ylim)
 
         plt.show()
     

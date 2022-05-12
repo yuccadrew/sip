@@ -562,6 +562,59 @@ class Dirichlet():
 #         print('')
 #         return K,b
 
+    def update(self,*args):
+        if args:
+            attributes = args
+        else:
+            attributes = self.__dict__.keys()
+
+        #combine mesh and pde to determine dirichlet attributes
+        n_node = len(mesh.nodes)
+        n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
+
+        #declare all attributes first
+        self.on_first_kind_bc = np.zeros((n_node,n_rep),dtype=bool)
+        self.s_n = np.zeros((n_node,n_rep),dtype=float)
+
+        #update dirichlet attributes accordingly
+        attr_1 = ['s_n']
+        
+        for attr in attributes:
+            if attr not in attr_1:
+                continue
+
+            for ky in pde.__dict__[attr].keys():
+                val = pde.__dict__[attr][ky]
+                mask = mesh.__dict__[ky]
+                x = mesh.nodes[mask,0]
+                y = mesh.nodes[mask,1]
+
+                for i in range(len(val)):
+                    if type(val[i]) is not list:
+                        if val[i] == None:
+                            continue
+
+                        self.on_first_kind_bc[mask,i] = True
+
+                        if callable(val[i]):
+                            self.__dict__[attr][mask,i] = val[i](x,y,0)
+                        else:
+                            self.__dict__[attr][mask,i] = val[i]
+                        
+                        continue
+
+                    for j in range(len(val[i])):
+                        if val[i][j] == None:
+                            continue
+
+                        #print(attr,ky,'[',i,',',j,']',val_i[j])
+                        self.on_first_kind_bc[mask,i,j] = True
+
+                        if callable(val[i][j]):
+                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0)
+                        else:
+                            self.__dict__[attr][mask,i,j] = val[i][j]
+
     def visualize(self,mesh,pde):
 #         mesh = self.mesh
 #         pde = self.pde
@@ -753,7 +806,7 @@ class PDE():
         if physics.is_solid_metal:
             self.s_n['is_on_metal_bound'] = [None]*n_rep
             self.s_n['is_on_metal_bound'][-2] = 0.0
-            
+
     def _set_static_outer_bound(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2

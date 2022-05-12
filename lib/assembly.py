@@ -483,25 +483,40 @@ class PerturbFEM():
         stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
         robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
         
+        
         for i in range(len(ratio)):
             #sigma_stern and sigma_diffuse are not used because is_solid_metal
             #is True
             sigma_stern = -ratio[i]*sigma_solid
             sigma_diffuse = -(1.0-ratio[i])*sigma_solid #0 if ratio is 1.0
-        
-            #placeholder to update domain and static solution
+
+            #placeholder to update domain with respecto static solution
+            #placeholder to update dirichlet to modify boundary condition
             
             for j in range(len(freq)):
+                #multipler to rows of domain.K2
                 diag = np.ones((n_node,n_rep),dtype=complex)
                 diag[:,:-2] = 1j*freq[j]
                 diag = sparse.diags(diag.flatten(order='C'))
+
+                #multipler to rows/cols of stern.K1
+                diag_s1 = np.ones((n_node,n_rep),dtype=complex)
+                diag_s1[:,-2] = sigma_stern
+                diag_s1 = sparse.diags(diag_s1.flatten(order='C'))
+                
+                #multipler to rows/cols of stern.K2
+                diag_s2 = np.ones((n_node,n_rep),dtype=complex)
+                diag_s2[:,-1] = 1j*freq[j]
+                diag_s2 = sparse.diags(diag_s2.flatten(order='C'))
             
+                #need to modify K to include sigma_stern and freq[i]
+                #need to modify b to include sigma_stern and freq[i]
                 K = (domain.K1+diag.dot(domain.K2)
-                     +stern.K1+stern.K2
+                     +diag_s1.dot(stern.K1)+diag_s2.dot(stern.K2)
                      +robin.K1+robin.K2)
                 b = (domain.b1+domain.b2
                      +stern.b1+stern.b2
-                     +robin.b1+robin.b2)+0j #need to bemodified to include sigma_stern
+                     +robin.b1+robin.b2)+0j 
                 K,b = set_first_kind_bc(dirichlet,K,b)
 
         self.mesh = mesh
