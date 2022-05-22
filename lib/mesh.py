@@ -362,13 +362,15 @@ class Mesh():
 
         plt.show()
 
-    def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],cmap='YlGnBu',
-                  logscale=False): #wrapped #tripcolor plots of colored elements
+    def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],edgecolor='none',
+                  cmap='YlGnBu',logscale=False): #wrapped 
+                                            #tripcolor plots of colored elements
         if len(f_in)==len(self.nodes):
             f = self.grad2d(f_in)[:,0]
         else:
             f = f_in
         
+        #!!!found bug when vmin and vmax are the same!!!
         if vmin==[]:
             vmin = min(f)
         
@@ -377,10 +379,10 @@ class Mesh():
         
         if logscale:
             norm = matplotlib.colors.LogNorm(vmin,vmax)
-            parser = {'edgecolor':'none','cmap':cmap,'norm':norm}
+            parser = {'edgecolor':edgecolor,'cmap':cmap,'norm':norm}
         else:
             norm = None
-            parser = {'edgecolor':'none','cmap':cmap,'norm':norm,
+            parser = {'edgecolor':edgecolor,'cmap':cmap,'norm':norm,
                       'vmin':vmin,'vmax':vmax}
 
         x = self.nodes[:,0]
@@ -485,6 +487,7 @@ class Mesh():
         self.is_on_inside_domain = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_stern = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_equipotential = np.zeros(len(self.nodes),dtype=bool)
+        self.is_on_axis_symmetry = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_top_bound = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_bottom_bound = np.zeros(len(self.nodes),dtype=bool)
         self.is_on_left_bound = np.zeros(len(self.nodes),dtype=bool)
@@ -525,6 +528,10 @@ class Mesh():
         mask = self.is_with_equipotential
         ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
         self.is_on_equipotential[ind_n] = True
+        
+        mask = self.is_with_axis_symmetry
+        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        self.is_on_axis_symmetry[ind_n] = True
         
         mask = self.is_with_top_bound
         ind_n = np.unique(self.edges[mask,:].flatten(order='C'))

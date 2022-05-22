@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 from scipy import constants
 from scipy.sparse import csr_matrix
@@ -562,7 +563,7 @@ class Dirichlet():
 #         print('')
 #         return K,b
 
-    def update(self,*args):
+    def update(self,*args): #placeholder
         if args:
             attributes = args
         else:
@@ -673,160 +674,6 @@ class PDE():
     def __init__(self,**kwargs): #avoid long list of inputs
         for key,value in kwargs.items():
             setattr(self,key,value)
-    
-    @classmethod
-    def init_static(cls,physics): #avoid long list of inputs
-        stat = cls()
-        keys = ['c_x','c_y','a','f','s_n','q_s']
-        for ky in keys:
-            stat.__dict__[ky] = {}
-
-        stat._set_static_air(physics)
-        stat._set_static_water(physics)
-        stat._set_static_solid(physics)
-        stat._set_static_stern_bound(physics)
-        stat._set_static_mixed_bound(physics)
-        stat._set_static_inner_bound(physics)
-        stat._set_static_metal_bound(physics)
-        stat._set_static_outer_bound(physics)
-        stat._set_static_unused_nodes(physics)
-        return stat
-    
-    @classmethod
-    def init_perturb(cls,physics):
-        pass
-
-    @staticmethod
-    def _build_a(physics):
-        def build_a(x,y,u): #only works for two types of ions
-#             K_B = Consts.k
-#             N_A = Consts.a
-#             E_C = Consts.e
-#             zval = 1.0
-#             pot_0 = np.zeros_like(x)
-#             cinf = physics.c_ion[0] #ion concentration
-#             ze = zval*E_C #ion valence times elementary charge
-#             u2d_scale = ze*pot_0[:]/K_B/physics.temperature #scaled potential in elements
-#             a = 2*ze**2*N_A*cinf/K_B/physics.temperature*np.cosh(u2d_scale)            
-#             f = -2*ze*N_A*cinf*(np.sinh(u2d_scale)-np.cosh(u2d_scale)*u2d_scale)
-            
-            for i in range(1,2):
-                v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-                a = (2.0*physics.Q_ion[i]**2*physics.C_ion[i]/Consts.k
-                     /physics.temperature*np.cosh(v)) #wrapped
-            return a
-
-        return build_a
-
-    @staticmethod
-    def _build_f(physics):
-        def build_f(x,y,u): #only works for two types of ions
-#             K_B = Consts.k
-#             N_A = Consts.a
-#             E_C = Consts.e
-#             zval = 1.0
-#             pot_0 = np.zeros_like(x)
-#             cinf = physics.c_ion[0] #ion concentration
-#             ze = zval*E_C #ion valence times elementary charge
-#             u2d_scale = ze*pot_0[:]/K_B/physics.temperature #scaled potential in elements
-#             a = 2*ze**2*N_A*cinf/K_B/physics.temperature*np.cosh(u2d_scale)            
-#             f = -2*ze*N_A*cinf*(np.sinh(u2d_scale)-np.cosh(u2d_scale)*u2d_scale)
-
-            #u2d_scale = ze*pot_0[:]/K_B/temperature
-            #f = -2*ze*N_A*cinf*(np.sinh(u2d_scale)-np.cosh(u2d_scale)*u2d_scale)
-            for i in range(1,2):
-                v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-                f = (-2.0*physics.Q_ion[i]*physics.C_ion[i]
-                     *(np.sinh(v)-np.cosh(v))*v) #wrapped
-            return f
-
-        return build_f
-
-    def _set_static_air(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-
-        self.c_x['is_in_air'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.c_y['is_in_air'] = [[0.0]*n_rep for i in range(n_rep)]
-
-        self.c_x['is_in_air'][-2][-2] = Consts.p
-        self.c_y['is_in_air'][-2][-2] = Consts.p
-    
-    def _set_static_water(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.c_x['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.c_y['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.a['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.f['is_in_water'] = [0.0]*n_rep
-        
-        self.c_x['is_in_water'][-2][-2] = physics.perm_a
-        self.c_y['is_in_water'][-2][-2] = physics.perm_a
-        self.a['is_in_water'][-2][-2] = PDE._build_a(physics)
-        self.f['is_in_water'][-2] = PDE._build_f(physics)
-    
-    def _set_static_solid(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.c_x['is_in_solid'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.c_y['is_in_solid'] = [[0.0]*n_rep for i in range(n_rep)]
-        
-        self.c_x['is_in_solid'][-2][-2] = physics.perm_i
-        self.c_y['is_in_solid'][-2][-2] = physics.perm_i
-    
-    def _set_static_stern_bound(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.a['is_with_stern'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.f['is_with_stern'] = [0.0]*n_rep
-        self.a['is_with_stern'][-1][-1] = 1.0
-        self.f['is_with_stern'][-1] = 1.0
-    
-    def _set_static_mixed_bound(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.q_s['is_with_mixed_bound'] = [[0.0]*n_rep for i in range(n_rep)]
-        self.q_s['is_with_mixed_bound'][-2][-1] = -1.0
-        
-    def _set_static_inner_bound(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.s_n['is_on_inner_bound'] = [None]*n_rep
-        self.s_n['is_on_inner_bound'][-2] = physics.s_0
-            
-    def _set_static_metal_bound(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        if physics.is_solid_metal:
-            self.s_n['is_on_metal_bound'] = [None]*n_rep
-            self.s_n['is_on_metal_bound'][-2] = 0.0
-
-    def _set_static_outer_bound(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.s_n['is_on_outer_bound'] = [0.0]*n_rep
-    
-    def _set_static_unused_nodes(self,physics):
-        n_ion = len(physics.c_ion)
-        n_rep = n_ion+2
-        
-        self.s_n['is_on_outside_domain'] = [None]*n_rep
-        for i in range(n_rep):
-            self.s_n['is_on_outside_domain'][i] = 0.0
-        
-        self.s_n['is_on_inside_domain'] = [None]*n_rep
-        for i in range(n_ion):
-            self.s_n['is_on_inside_domain'][i] = 0.0
-        
-        self.s_n['is_on_outside_stern'] = [None]*n_rep
-        self.s_n['is_on_outside_stern'][-1] = 0.0
 
     def visualize(self,*args):
         if args:
@@ -835,8 +682,8 @@ class PDE():
             attributes = self.__dict__.keys()
         
         attr_1 = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y',
-                      'a','a_n','q_s'] #ndim equal 3
-        attr_2 = ['gamma_x','gamma_y','f','f_d','f_n','g_s','s_n'] #ndim equal 2
+                      'a','a_n','q_s'] #ndim = 3
+        attr_2 = ['gamma_x','gamma_y','f','f_d','f_n','g_s','s_n'] #ndim = 2
 
         for attr in attributes:
             if attr not in attr_1+attr_2:
@@ -881,55 +728,51 @@ class StaticPDE(PDE):
         self._set_static_air(physics)
         self._set_static_water(physics)
         self._set_static_solid(physics)
-        self._set_static_stern_bound(physics)
-        self._set_static_mixed_bound(physics)
-        self._set_static_inner_bound(physics)
-        self._set_static_metal_bound(physics)
-        self._set_static_outer_bound(physics)
-        self._set_static_unused_nodes(physics)
+        self._set_static_stern_bound(physics) #Stern equation
+        self._set_static_mixed_bound(physics) #Robin B.C.
+        self._set_static_inner_bound(physics) #Dirichlet B.C.
+        self._set_static_metal_bound(physics) #Dirichlet B.C.
+        self._set_static_outer_bound(physics) #Dirichlet B.C.
+        self._set_static_unused_nodes(physics) #Dirichlet B.C.
 
     @staticmethod
     def _build_a(physics):
-        def build_a(x,y,u): #only works for two types of ions
-#             K_B = Consts.k
-#             N_A = Consts.a
-#             E_C = Consts.e
-#             zval = 1.0
-#             pot_0 = np.zeros_like(x)
-#             cinf = physics.c_ion[0] #ion concentration
-#             ze = zval*E_C #ion valence times elementary charge
-#             u2d_scale = ze*pot_0[:]/K_B/physics.temperature #scaled potential in elements
-#             a = 2*ze**2*N_A*cinf/K_B/physics.temperature*np.cosh(u2d_scale)            
-#             f = -2*ze*N_A*cinf*(np.sinh(u2d_scale)-np.cosh(u2d_scale)*u2d_scale)
-            
-            for i in range(1,2):
-                v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-                a = (2.0*physics.Q_ion[i]**2*physics.C_ion[i]/Consts.k
-                     /physics.temperature*np.cosh(v)) #wrapped
+        def build_a(x,y,u): #generalized PB equation
+            n_ion = len(physics.c_ion)
+            a = np.zeros_like(x)
+            for i in range(n_ion):
+                k = -physics.Q_ion[i]/Consts.k/physics.temperature
+                a += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
+
+#             i = 1
+#             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
+#             a1 = (2.0*physics.Q_ion[i]**2*physics.C_ion[i]/Consts.k
+#                   /physics.temperature*np.cosh(v)) #wrapped
+
+#             print('a')
+#             print(a)
+#             print(a1)
             return a
-        
+
         return build_a
 
     @staticmethod
     def _build_f(physics):
-        def build_f(x,y,u): #only works for two types of ions
-#             K_B = Consts.k
-#             N_A = Consts.a
-#             E_C = Consts.e
-#             zval = 1.0
-#             pot_0 = np.zeros_like(x)
-#             cinf = physics.c_ion[0] #ion concentration
-#             ze = zval*E_C #ion valence times elementary charge
-#             u2d_scale = ze*pot_0[:]/K_B/physics.temperature #scaled potential in elements
-#             a = 2*ze**2*N_A*cinf/K_B/physics.temperature*np.cosh(u2d_scale)            
-#             f = -2*ze*N_A*cinf*(np.sinh(u2d_scale)-np.cosh(u2d_scale)*u2d_scale)
+        def build_f(x,y,u): #generalized PB equation
+            n_ion = len(physics.c_ion)
+            f = np.zeros_like(x)
+            for i in range(n_ion):
+                k = -physics.Q_ion[i]/Consts.k/physics.temperature
+                f += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
 
-            #u2d_scale = ze*pot_0[:]/K_B/temperature
-            #f = -2*ze*N_A*cinf*(np.sinh(u2d_scale)-np.cosh(u2d_scale)*u2d_scale)
-            for i in range(1,2):
-                v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-                f = (-2.0*physics.Q_ion[i]*physics.C_ion[i]
-                     *(np.sinh(v)-np.cosh(v))*v) #wrapped
+#             i = 1
+#             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
+#             f1 = (-2.0*physics.Q_ion[i]*physics.C_ion[i]
+#                   *(np.sinh(v)-np.cosh(v))*v) #wrapped
+
+#             print('f')
+#             print(f)
+#             print(f1)
             return f
 
         return build_f
@@ -947,17 +790,17 @@ class StaticPDE(PDE):
     def _set_static_water(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
-        
+
         self.c_x['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
         self.c_y['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
         self.a['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
         self.f['is_in_water'] = [0.0]*n_rep
-        
+
         self.c_x['is_in_water'][-2][-2] = physics.perm_a
         self.c_y['is_in_water'][-2][-2] = physics.perm_a
-        self.a['is_in_water'][-2][-2] = PDE._build_a(physics)
-        self.f['is_in_water'][-2] = PDE._build_f(physics)
-    
+        self.a['is_in_water'][-2][-2] = StaticPDE._build_a(physics)
+        self.f['is_in_water'][-2] = StaticPDE._build_f(physics)
+
     def _set_static_solid(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
@@ -967,34 +810,34 @@ class StaticPDE(PDE):
         
         self.c_x['is_in_solid'][-2][-2] = physics.perm_i
         self.c_y['is_in_solid'][-2][-2] = physics.perm_i
-    
+
     def _set_static_stern_bound(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
-        
+
         self.a['is_with_stern'] = [[0.0]*n_rep for i in range(n_rep)]
         self.f['is_with_stern'] = [0.0]*n_rep
         self.a['is_with_stern'][-1][-1] = 1.0
-        self.f['is_with_stern'][-1] = 1.0
-    
+        self.f['is_with_stern'][-1] = 1.0*physics.sigma_solid
+
     def _set_static_mixed_bound(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
         
         self.q_s['is_with_mixed_bound'] = [[0.0]*n_rep for i in range(n_rep)]
         self.q_s['is_with_mixed_bound'][-2][-1] = -1.0
-        
+
     def _set_static_inner_bound(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
-        
+
         self.s_n['is_on_inner_bound'] = [None]*n_rep
         self.s_n['is_on_inner_bound'][-2] = physics.s_0
-            
+
     def _set_static_metal_bound(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
-        
+
         if physics.is_solid_metal:
             self.s_n['is_on_metal_bound'] = [None]*n_rep
             self.s_n['is_on_metal_bound'][-2] = 0.0
@@ -1004,11 +847,12 @@ class StaticPDE(PDE):
         n_rep = n_ion+2
 
         self.s_n['is_on_outer_bound'] = [0.0]*n_rep
-    
+
     def _set_static_unused_nodes(self,physics):
+        #to disable a zone 1) set PDE coefficients 0; 2) impose 0 Dirichlet B.C.
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
-        
+
         self.s_n['is_on_outside_domain'] = [None]*n_rep
         for i in range(n_rep):
             self.s_n['is_on_outside_domain'][i] = 0.0
@@ -1116,8 +960,8 @@ class PerturbPDE(PDE):
         self.c_y['is_with_stern'] = [[0.0]*n_rep for i in range(n_rep)]
         self.a['is_with_stern'] = [[0.0]*n_rep for i in range(n_rep)]
         
-        self.c_x['is_with_stern'][-1][-2] = physics.mu_s #normalized sigma_stern
-        self.c_y['is_with_stern'][-1][-2] = physics.mu_s #normalized sigma_stern
+        self.c_x['is_with_stern'][-1][-2] = -physics.mu_s*physics.sigma_solid #normalized sigma_stern
+        self.c_y['is_with_stern'][-1][-2] = -physics.mu_s*physics.sigma_solid #normalized sigma_stern
         
         self.c_x['is_with_stern'][-1][-1] = physics.Diff_s
         self.c_y['is_with_stern'][-1][-1] = physics.Diff_s
@@ -1155,6 +999,7 @@ class PerturbPDE(PDE):
         self.s_n['is_on_outer_bound'][-2] = PerturbPDE._build_s(physics)
     
     def _set_perturb_unused_nodes(self,physics):
+        #to disable a zone 1) set PDE coefficients 0; 2) impose 0 Dirichlet B.C.
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
         
@@ -1170,6 +1015,70 @@ class PerturbPDE(PDE):
         self.s_n['is_on_outside_stern'][-1] = 0.0
 
 
+class StaticPB(StaticPDE): #Poisson-Boltzmann equation
+    def __init__(self,physics): #avoid long list of inputs
+        attributes = ['c_x','c_y','a_n','f_n','s_n','g_s']
+        for attr in attributes:
+            self.__dict__[attr] = {}
+        
+        self.c_x['is_in_water'] = [[physics.perm_a]]
+        self.c_y['is_in_water'] = [[physics.perm_a]]
+        self.a_n['is_on_water'] = [[StaticPDE._build_a(physics)]]
+        self.f_n['is_on_water'] = [StaticPDE._build_f(physics)]
+        self.g_s['is_with_mixed_bound'] = [1.0*physics.sigma_solid]
+        self.s_n['is_on_outside_water'] = [0.0]
+
+    def decompose(self): #to use build_a and build_f externally
+        pb1 = PDE()
+        pb2 = PDE()
+
+        pb1.c_x = copy.deepcopy(self.c_x)
+        pb1.c_y = copy.deepcopy(self.c_y)
+        pb1.g_s = copy.deepcopy(self.g_s)
+        pb1.s_n = copy.deepcopy(self.s_n)
+        
+        pb2.c_x = {'is_in_water':[[0.0]]}
+        pb2.c_y = {'is_in_water':[[0.0]]}
+        pb2.a_n = {'is_on_water':[[1.0]]} #should not matter if a or a_n
+        pb2.f_n = {'is_on_water':[1.0]} #should not matter if f or f_n
+        
+        return pb1,pb2
+
+
+class PerturbPNP(PerturbPDE): #Poisson-Nernst-Planck equation
+    def __init__(self,physics): #avoid long list of inputs
+        super().__init__(physics)
+
+    def decompose(self): #to use build_c and build_alpha externally
+        n_rep = len(self.c_x[list(self.c_x.keys())[0]])
+        
+        pnp1 = PDE()
+        pnp2 = PDE()
+        
+        pnp1.c_x = copy.deepcopy(self.c_x)
+        pnp1.c_y = copy.deepcopy(self.c_y)
+        pnp1.a = copy.deepcopy(self.a)
+        pnp1.g_s = copy.deepcopy(self.g_s)
+        pnp1.q_s = copy.deepcopy(self.q_s)
+
+        pnp2.c_x = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+        pnp2.c_y = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+        
+        pnp2.alpha_x = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+        pnp2.alpha_y = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+
+        for i in range(n_rep-2):
+            pnp1.c_x['is_in_water'][i][-2] = 0.0
+            pnp1.c_y['is_in_water'][i][-2] = 0.0
+
+            pnp2.c_x['is_in_water'][i][-2] = 1.0 #for sparsity
+            pnp2.c_y['is_in_water'][i][-2] = 1.0 #for sparsity
+
+            pnp2.alpha_x['is_in_water'][i][i] = 1.0 #for sparsity
+            pnp2.alpha_y['is_in_water'][i][i] = 1.0 #for sparsity
+
+        return pnp1,pnp2
+
 class Physics(Consts):
     def __init__(self,**kwargs): #avoid long list of inputs
         for key,value in kwargs.items():
@@ -1183,12 +1092,27 @@ class Physics(Consts):
         self.perm_a = self.rel_perm_a*Consts.p
         self.perm_i = self.rel_perm_i*Consts.p
 
+        #compute Debyle length for each ion species
         n_ion = len(self.c_ion)
         self.lambda_d = [0.0]*n_ion
         for i in range(n_ion):
             dl = np.sqrt(self.perm_a*Consts.k*self.temperature/2
                          /self.Q_ion[i]/self.Q_ion[i]/self.C_ion[i]) #wrapped
             self.lambda_d[i] = dl
+
+        #suggest initial surface charge density for solving PB equation
+        #sigma_init is dominated by Debye length
+        #if Debye length << sphere radius; vice versa
+        unsigned_sigma_init = [0.0]*n_ion
+        for i in range(n_ion):
+            zeta = 0.01*Consts.k*self.temperature/abs(self.Q_ion[i])
+            if self.radius_a>0:
+                dl = 1/(1/self.lambda_d[i]+1/self.radius_a)
+            else:
+                dl = self.lambda_d[i]
+
+            unsigned_sigma_init[i] = zeta*dl/self.perm_a
+        self.sigma_init = min(unsigned_sigma_init)*np.sign(self.sigma_solid)
 
 
 class Survey():
