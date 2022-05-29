@@ -1,10 +1,14 @@
 import numpy as np
 import numpy.matlib
-import time
+import multiprocessing as mp
+import functools,time
 
 from scipy import sparse
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
+from tqdm import tqdm
+from empymod.utils import check_time,conv_warning
+from empymod.model import tem
 from .materials import Domain,Stern,Robin,Dirichlet
 from .materials import Consts
 
@@ -21,19 +25,63 @@ def assemble_Ke2d(mesh,domain):
 
     I = np.zeros(n_elem*9*n_rep**2,dtype=int)
     J = np.zeros(n_elem*9*n_rep**2,dtype=int)
-    V1 = np.zeros(n_elem*9*n_rep**2,dtype=float)
-    V2 = np.zeros(n_elem*9*n_rep**2,dtype=float)
-    b1 = np.zeros(n_node*n_rep,dtype=float)
-    b2 = np.zeros(n_node*n_rep,dtype=float)
+    V1 = np.zeros(n_elem*9*n_rep**2,dtype=domain.c_x.dtype)
+    V2 = np.zeros(n_elem*9*n_rep**2,dtype=domain.c_x.dtype)
+    b1 = np.zeros(n_node*n_rep,dtype=domain.c_x.dtype)
+    b2 = np.zeros(n_node*n_rep,dtype=domain.c_x.dtype)
 
     REP = np.reshape(np.arange(n_node*n_rep,dtype=int),(n_node,n_rep))
     ROW = np.matlib.repmat(np.arange(3*n_rep,dtype=int),3*n_rep,1).T
     COL = np.matlib.repmat(np.arange(3*n_rep,dtype=int),3*n_rep,1)
 
-    ind_K = np.where(domain.K_stack.flatten(order='C'))[0]
-    ind_b = np.where(domain.b_stack.flatten(order='C'))[0]
+    ind_K = np.where(domain.K_stack.ravel())[0]
+    ind_b = np.where(domain.b_stack.ravel())[0]
 
-    elem_proc = mesh.is_inside_domain
+    #check elements to be computed
+    mask = np.any(np.sign(domain.a).astype(bool),axis=(1,2))
+    mask = mask|np.any(np.sign(domain.c_x).astype(bool),axis=(1,2))
+    mask = mask|np.any(np.sign(domain.c_y).astype(bool),axis=(1,2))
+    mask = mask|np.any(np.sign(domain.alpha_x).astype(bool),axis=(1,2))
+    mask = mask|np.any(np.sign(domain.alpha_y).astype(bool),axis=(1,2))
+    mask = mask|np.any(np.sign(domain.beta_x).astype(bool),axis=(1,2))
+    mask = mask|np.any(np.sign(domain.beta_y).astype(bool),axis=(1,2))
+    
+    mask = mask|np.any(np.sign(domain.f).astype(bool),axis=1)
+    mask = mask|np.any(np.sign(domain.gamma_x).astype(bool),axis=1)
+    mask = mask|np.any(np.sign(domain.gamma_y).astype(bool),axis=1)
+    
+    #roughly check elements used in the air
+    if np.any(np.sign(domain.a_n[mesh.is_on_air]).astype(bool)):
+        mask = mask|mesh.is_in_air
+
+    if np.any(np.sign(domain.f_n[mesh.is_on_air]).astype(bool)):
+        mask = mask|mesh.is_in_air
+
+    if np.any(np.sign(domain.f_d[mesh.is_on_air]).astype(bool)):
+        mask = mask|mesh.is_in_air
+
+    #roughly check elements used in the water
+    if np.any(np.sign(domain.a_n[mesh.is_on_water]).astype(bool)):
+        mask = mask|mesh.is_in_water
+    
+    if np.any(np.sign(domain.f_n[mesh.is_on_water]).astype(bool)):
+        mask = mask|mesh.is_in_water
+
+    if np.any(np.sign(domain.f_d[mesh.is_on_water]).astype(bool)):
+        mask = mask|mesh.is_in_water
+
+    #roughly check elements used in the solid
+    if np.any(np.sign(domain.a_n[mesh.is_on_solid]).astype(bool)):
+        mask = mask|mesh.is_in_solid
+    
+    if np.any(np.sign(domain.f_n[mesh.is_on_solid]).astype(bool)):
+        mask = mask|mesh.is_in_solid
+    
+    if np.any(np.sign(domain.f_d[mesh.is_on_water]).astype(bool)):
+        mask = mask|mesh.is_in_water
+
+    elem_proc = mask&mesh.is_inside_domain
+    #elem_proc = mesh.is_inside_domain
     for i in range(n_elem):
         cnt = i*9*n_rep**2
         ind_n = mesh.elements[i,:]
@@ -61,11 +109,11 @@ def assemble_Ke2d(mesh,domain):
             be1 = np.zeros(3*n_rep,dtype=float)
             be2 = np.zeros(3*n_rep,dtype=float)
 
-        ind_rep = REP[ind_n,:].flatten(order='C')
-        I[cnt:cnt+9*n_rep**2] = ind_rep[ROW].flatten(order='C')
-        J[cnt:cnt+9*n_rep**2] = ind_rep[COL].flatten(order='C')
-        V1[cnt:cnt+9*n_rep**2] = Ke1.flatten(order='C')
-        V2[cnt:cnt+9*n_rep**2] = Ke2.flatten(order='C')
+        ind_rep = REP[ind_n,:].ravel()
+        I[cnt:cnt+9*n_rep**2] = ind_rep[ROW].ravel()
+        J[cnt:cnt+9*n_rep**2] = ind_rep[COL].ravel()
+        V1[cnt:cnt+9*n_rep**2] = Ke1.ravel()
+        V2[cnt:cnt+9*n_rep**2] = Ke2.ravel()
         b1[ind_rep] = b1[ind_rep]+be1
         b2[ind_rep] = b2[ind_rep]+be2
 
@@ -118,10 +166,10 @@ def build_Ke2d(c_x,c_y,alpha_x,alpha_y,beta_x,beta_y,gamma_x,gamma_y,a,f,
 def quick_build_Ke2d(c_x,c_y,alpha_x,alpha_y,beta_x,beta_y,gamma_x,gamma_y,a,f,
                      a_n,f_n,f_d,Je,area,ind_K,ind_b): #wrapped
     n_rep = len(c_x)
-    Ke1 = np.zeros((3*n_rep,3*n_rep),dtype=float)
-    Ke2 = np.zeros((3*n_rep,3*n_rep),dtype=float)
-    be1 = np.zeros(3*n_rep,dtype=float)
-    be2 = np.zeros(3*n_rep,dtype=float)
+    Ke1 = np.zeros((3*n_rep,3*n_rep),dtype=c_x.dtype)
+    Ke2 = np.zeros((3*n_rep,3*n_rep),dtype=c_x.dtype)
+    be1 = np.zeros(3*n_rep,dtype=c_x.dtype)
+    be2 = np.zeros(3*n_rep,dtype=c_x.dtype)
 
     for ij in ind_K:
         i = int(ij/(3*n_rep)) #for i in range(3*n_rep)
@@ -168,17 +216,17 @@ def assemble_Ke1d(mesh,stern):
     
     I = np.zeros(n_edge*4*n_rep**2,dtype=int)
     J = np.zeros(n_edge*4*n_rep**2,dtype=int)
-    V1 = np.zeros(n_edge*4*n_rep**2,dtype=float)
-    V2 = np.zeros(n_edge*4*n_rep**2,dtype=float)
-    b1 = np.zeros(n_node*n_rep,dtype=float)
-    b2 = np.zeros(n_node*n_rep,dtype=float)
+    V1 = np.zeros(n_edge*4*n_rep**2,dtype=stern.c_x.dtype)
+    V2 = np.zeros(n_edge*4*n_rep**2,dtype=stern.c_x.dtype)
+    b1 = np.zeros(n_node*n_rep,dtype=stern.c_x.dtype)
+    b2 = np.zeros(n_node*n_rep,dtype=stern.c_x.dtype)
     
     REP = np.reshape(np.arange(n_node*n_rep,dtype=int),(n_node,n_rep))
     ROW = np.matlib.repmat(np.arange(2*n_rep,dtype=int),2*n_rep,1).T
     COL = np.matlib.repmat(np.arange(2*n_rep,dtype=int),2*n_rep,1)
 
-    ind_K = np.where(stern.K_stack.flatten(order='C'))[0]
-    ind_b = np.where(stern.b_stack.flatten(order='C'))[0]
+    ind_K = np.where(stern.K_stack.ravel())[0]
+    ind_b = np.where(stern.b_stack.ravel())[0]
     
     edge_proc = mesh.is_with_stern
     for i in range(n_edge):
@@ -205,11 +253,11 @@ def assemble_Ke1d(mesh,stern):
             be1 = np.zeros(2*n_rep,dtype=float)
             be2 = np.zeros(2*n_rep,dtype=float)
         
-        ind_rep = REP[ind_n,:].flatten(order='C')
-        I[cnt:cnt+4*n_rep**2] = ind_rep[ROW].flatten(order='C')
-        J[cnt:cnt+4*n_rep**2] = ind_rep[COL].flatten(order='C')
-        V1[cnt:cnt+4*n_rep**2] = Ke1.flatten(order='C')
-        V2[cnt:cnt+4*n_rep**2] = Ke2.flatten(order='C')
+        ind_rep = REP[ind_n,:].ravel()
+        I[cnt:cnt+4*n_rep**2] = ind_rep[ROW].ravel()
+        J[cnt:cnt+4*n_rep**2] = ind_rep[COL].ravel()
+        V1[cnt:cnt+4*n_rep**2] = Ke1.ravel()
+        V2[cnt:cnt+4*n_rep**2] = Ke2.ravel()
         b1[ind_rep] = b1[ind_rep]+be1
         b2[ind_rep] = b2[ind_rep]+be2
 
@@ -252,10 +300,10 @@ def build_Ke1d(c_x,alpha_x,beta_x,gamma_x,a,f,Je,length):
 
 def quick_build_Ke1d(c_x,alpha_x,beta_x,gamma_x,a,f,Je,length,ind_K,ind_b):
     n_rep = len(c_x)
-    Ke1 = np.zeros((2*n_rep,2*n_rep),dtype=float)
-    Ke2 = np.zeros((2*n_rep,2*n_rep),dtype=float)
-    be1 = np.zeros(2*n_rep,dtype=float)
-    be2 = np.zeros(2*n_rep,dtype=float)
+    Ke1 = np.zeros((2*n_rep,2*n_rep),dtype=c_x.dtype)
+    Ke2 = np.zeros((2*n_rep,2*n_rep),dtype=c_x.dtype)
+    be1 = np.zeros(2*n_rep,dtype=c_x.dtype)
+    be2 = np.zeros(2*n_rep,dtype=c_x.dtype)
     
     for ij in ind_K:
         i = int(ij/(2*n_rep)) #for i in range(2*n_rep)
@@ -294,17 +342,17 @@ def assemble_Ks2d(mesh,robin):
 
     I = np.zeros(n_edge*4*n_rep**2,dtype=int)
     J = np.zeros(n_edge*4*n_rep**2,dtype=int)
-    V1 = np.zeros(n_edge*4*n_rep**2,dtype=float)
-    V2 = np.zeros(n_edge*4*n_rep**2,dtype=float)
-    b1 = np.zeros(n_node*n_rep,dtype=float)
-    b2 = np.zeros(n_node*n_rep,dtype=float)
+    V1 = np.zeros(n_edge*4*n_rep**2,dtype=robin.g_s.dtype)
+    V2 = np.zeros(n_edge*4*n_rep**2,dtype=robin.g_s.dtype)
+    b1 = np.zeros(n_node*n_rep,dtype=robin.g_s.dtype)
+    b2 = np.zeros(n_node*n_rep,dtype=robin.g_s.dtype)
 
     REP = np.reshape(np.arange(n_node*n_rep,dtype=int),(n_node,n_rep))
     ROW = np.matlib.repmat(np.arange(2*n_rep,dtype=int),2*n_rep,1).T
     COL = np.matlib.repmat(np.arange(2*n_rep,dtype=int),2*n_rep,1)
     
-    ind_K = np.where(robin.K_stack.flatten(order='C'))[0]
-    ind_b = np.where(robin.b_stack.flatten(order='C'))[0]
+    ind_K = np.where(robin.K_stack.ravel())[0]
+    ind_b = np.where(robin.b_stack.ravel())[0]
 
     edge_proc = mesh.is_with_stern
     for i in range(n_edge):
@@ -320,10 +368,10 @@ def assemble_Ks2d(mesh,robin):
             Ks1 = np.zeros((2*n_rep,2*n_rep),dtype=float)
             bs1 = np.zeros(2*n_rep,dtype=float)
 
-        ind_rep = REP[ind_n,:].flatten(order='C')
-        I[cnt:cnt+4*n_rep**2] = ind_rep[ROW].flatten(order='C')
-        J[cnt:cnt+4*n_rep**2] = ind_rep[COL].flatten(order='C')
-        V1[cnt:cnt+4*n_rep**2] = Ks1.flatten(order='C')
+        ind_rep = REP[ind_n,:].ravel()
+        I[cnt:cnt+4*n_rep**2] = ind_rep[ROW].ravel()
+        J[cnt:cnt+4*n_rep**2] = ind_rep[COL].ravel()
+        V1[cnt:cnt+4*n_rep**2] = Ks1.ravel()
         b1[ind_rep] = b1[ind_rep]+bs1
 
     K1 = csr_matrix((V1,(I,J)),shape=(n_node*n_rep,n_node*n_rep))
@@ -355,8 +403,8 @@ def build_Ks2d(g_s,q_s,length):
 
 def quick_build_Ks2d(g_s,q_s,length,ind_K,ind_b):
     n_rep = len(g_s)
-    Ks1 = np.zeros((2*n_rep,2*n_rep),dtype=float)
-    bs1 = np.zeros(2*n_rep,dtype=float)
+    Ks1 = np.zeros((2*n_rep,2*n_rep),dtype=g_s.dtype)
+    bs1 = np.zeros(2*n_rep,dtype=g_s.dtype)
 
     for ij in ind_K:
         i = int(ij/(2*n_rep)) #for i in range(2*n_rep)
@@ -377,12 +425,13 @@ def quick_build_Ks2d(g_s,q_s,length,ind_K,ind_b):
     return Ks1,bs1
 
 
-def set_first_kind_bc(dirichlet,K_in,b_in):
-    print('Incoorprating the Dirichlet boundary condition')
-    start = time.time()
+def set_first_kind_bc(dirichlet,K_in,b_in,verb=1):
+    if verb:
+        print('Incoorprating the Dirichlet boundary condition')
+        start = time.time()
 
-    mask = dirichlet.on_first_kind_bc.flatten(order='C')
-    s_n = dirichlet.s_n.flatten(order='C')
+    mask = dirichlet.on_first_kind_bc.ravel()
+    s_n = dirichlet.s_n.ravel()
 
     K = csr_matrix.copy(K_in)
     b = np.zeros_like(b_in)
@@ -399,9 +448,10 @@ def set_first_kind_bc(dirichlet,K_in,b_in):
     K = zero_cols(K,cols)
     K = K+M
 
-    elapsed = time.time()-start
-    print('Time elapsed ',elapsed,'sec')
-    print('')
+    if verb:
+        elapsed = time.time()-start
+        print('Time elapsed ',elapsed,'sec')
+        print('')
     return K,b
 
 
@@ -421,14 +471,75 @@ def zero_cols(M,cols):
     return M.dot(diag)
 
 
-def solve_system(K,b):
-    print('Calling sparse linear system solver')
-    start = time.time()
+def solve_system(K,b,verb=1):
+    if verb:
+        print('Calling sparse linear system solver')
+        start = time.time()
     K.eliminate_zeros()
     sol = spsolve(K,b)
-    elapsed = time.time()-start
-    print('Time elapsed ',elapsed,'sec')
-    print('')
+    
+    if verb:
+        elapsed = time.time()-start
+        print('Time elapsed ',elapsed,'sec')
+        print('')
+    return sol
+
+
+def solve_stat(domain,stern,robin,dirichlet,mesh,ratio,a_n,f_n):
+    #multipler to rows of domain[1].K2
+    n_node,n_rep = dirichlet.s_n.shape
+    diag_a = np.zeros((n_node,n_rep),dtype=float)
+    diag_a[mesh.is_on_water,0] = a_n
+    diag_a = sparse.diags(diag_a.ravel())
+
+    #multiplier to rows of domain[1].b2
+    diag_f = np.zeros((n_node,n_rep),dtype=float)
+    diag_f[mesh.is_on_water,0] = f_n
+    diag_f = sparse.diags(diag_f.ravel())
+
+    #compute K and b and solve the sparse linear system
+    K = (domain[0].K1+domain[0].K2
+         +diag_a.dot(domain[1].K2)
+         +stern.K1+stern.K2
+         +robin.K1+robin.K2) #wrapped
+    b = (domain[0].b1+domain[0].b2
+         +diag_f.dot(domain[1].b2)
+         +stern.b1+stern.b2
+         +robin.b1*ratio+robin.b2) #wrapped
+    K,b = set_first_kind_bc(dirichlet,K,b,verb=0)
+    sol = np.reshape(solve_system(K,b,verb=0),(n_node,n_rep))
+
+    return sol
+
+
+def solve_pert(domain,stern,robin,dirichlet,ratio,freq):
+    #multipler to rows of domain[0].K2
+    n_node,n_rep = dirichlet.s_n.shape
+    diag_a = np.ones((n_node,n_rep),dtype=complex)
+    diag_a[:,:-2] = 1j*freq*(2*np.pi) #freq -> angular freq
+    diag_a = sparse.diags(diag_a.ravel())
+
+    #multipler to cols of stern.K1
+    diag_s1 = np.ones((n_node,n_rep),dtype=float)
+    diag_s1[:,-2] = ratio
+    diag_s1 = sparse.diags(diag_s1.ravel())
+
+    #multipler to rows/cols of stern.K2
+    diag_s2 = np.ones((n_node,n_rep),dtype=complex)
+    diag_s2[:,-1] = 1j*freq*(2*np.pi) #freq -> angular freq
+    diag_s2 = sparse.diags(diag_s2.ravel())
+        
+    #compute K and b and solve the sparse linear system
+    K = (domain[0].K1+diag_a.dot(domain[0].K2)
+         +domain[1].K1
+         +stern.K1.dot(diag_s1)+stern.K2.dot(diag_s2)
+         +robin.K1+robin.K2)
+    b = (domain[0].b1+domain[0].b2
+         +stern.b1+stern.b2
+         +robin.b1+robin.b2)+0j
+    K,b = set_first_kind_bc(dirichlet,K,b,verb=0)
+    sol = np.reshape(solve_system(K,b,verb=0),(n_node,n_rep))
+
     return sol
 
 
@@ -469,15 +580,16 @@ class FEM():
             lbl = lbl+['$\delta U_s$','$\delta \Sigma_s$']
 
         mask = self.mesh.is_on_stern
+        sol = self.sol[0][0]
         fig,ax=plt.subplots(n_rep,4,figsize=(16,n_rep*4),sharex=True)
         axes = ax.flatten()
         for i in range(n_rep):
             if self.mesh.axis_symmetry=='Y':
                 x = self.mesh.nodes[mask,0]
-                f = self.sol[mask,i]
+                f = sol[mask,i]
                 if i==1:
                     height_water = 10e-9
-                    f = ((self.sol[mask,0]-self.sol[mask,1])*Consts.f)*height_water
+                    f = ((sol[mask,0]-sol[mask,1])*Consts.f)*height_water
                 axes[4*i+0].plot(x,np.abs(f),'.',c='tab:blue',markersize=5)
                 axes[4*i+1].plot(x,np.angle(f)*180/np.pi,'.',c='tab:blue',markersize=5)
 
@@ -493,7 +605,6 @@ class FEM():
             else:
                 pass
 
-
             axes[4*i].set_ylabel(lbl[i])
         
         axes[0].set_title('Amplitude')
@@ -508,7 +619,7 @@ class FEM():
         if len(xlim)==2:
             axes[0].set_xlim(xlim)
 
-        #plt.tight_layout()
+        plt.tight_layout()
         plt.show()
 
 
@@ -534,82 +645,141 @@ class StaticFEM(FEM):
         self.dirichlet = dirichlet
 
     def solve(self,ratio,sigma_init=0.002e-2,max_iter=20):
-        n_node = len(self.mesh.nodes)
-        n_rep = len(self.pde.c_x[list(self.pde.c_x.keys())[0]])
-
         sigma_solid = self.pde.g_s['is_with_mixed_bound'][0]
-        self.ratio = ratio
-        self.sol = [[None]*max_iter for i in range(len(ratio))]
-
-        x_n = self.mesh.nodes[self.mesh.is_on_water,0]
-        y_n = self.mesh.nodes[self.mesh.is_on_water,1]
+        sol = [None]*len(ratio)
 
         for i in range(len(ratio)):
             sigma_diffuse = -sigma_solid*(1-ratio[i])
-            sigma_n = np.min([np.abs(sigma_init),np.abs(sigma_diffuse)])
-            sigma_n *= np.sign(sigma_solid)
-            print('sigma_init',sigma_init,'sigma_solid',sigma_solid)
+            sigma_i = np.min([np.abs(sigma_init),np.abs(sigma_diffuse)])
+            sigma_i *= np.sign(sigma_solid)
+            #print('sigma_init',sigma_init,'sigma_solid',sigma_solid)
+            
+            u_1 = np.zeros(np.sum(self.mesh.is_on_water),dtype=float)
+            u_i = np.zeros(np.sum(self.mesh.is_on_water),dtype=float)
+            
+            sol[i] = []
+            func_stat = functools.partial(solve_stat,self.domain,self.stern,
+                                          self.robin,self.dirichlet,self.mesh) #wrapped
 
-            u_1 = np.zeros(n_node,dtype=float)[self.mesh.is_on_water]
-            u_n = np.zeros(n_node,dtype=float)[self.mesh.is_on_water]
-            for j in range(max_iter):
-                print('='*20+' ITERATION #',j+1,' '+'='*20)
-                #print('sigma_n',sigma_n,'-sigma_diffuse',-sigma_diffuse)
-                print('Current sigma is:',sigma_n)
-                print('Target sigma is:',-sigma_diffuse)
-                print('')
+            print('Iteratively solving nonlinear PB equation for:')
+            print('ratio: {0:.2f}'.format(ratio[i]))
+            string = 'sigma_d*(-1) [C/(m*m)] : {0:.2E} & {1:.2E} [init. & targ.]'
+            print(string.format(sigma_i,-sigma_diffuse))
+            print('This will take a while')
+            start = time.time()
 
-                a_n = self.pde.a_n['is_on_water'][0][0](x_n,y_n,u_n)
-                f_n = self.pde.f_n['is_on_water'][0](x_n,y_n,u_n)
+            for j in tqdm(range(max_iter)):
+                a_n = self.pde.func_a(x=[],y=[],u=u_i)
+                f_n = self.pde.func_f(x=[],y=[],u=u_i)
+                
+                sol[i].append(func_stat(sigma_i/sigma_solid,a_n,f_n))
+                
+                #update u_i
+                u_1[:] = u_i
+                u_i = sol[i][j][self.mesh.is_on_water,0]
+                
+                #update sigma_i
+                sigma_1 = sigma_i
+                sigma_i = np.min([np.abs(sigma_i*5),np.abs(sigma_diffuse)])
+                sigma_i *= np.sign(sigma_solid)
 
-                diag_a = np.zeros((n_node,n_rep),dtype=float)
-                diag_f = np.zeros((n_node,n_rep),dtype=float)
-
-                diag_a[self.mesh.is_on_water,0] = a_n
-                diag_f[self.mesh.is_on_water,0] = f_n
-
-                diag_a = sparse.diags(diag_a.flatten(order='C'))
-                diag_f = sparse.diags(diag_f.flatten(order='C'))
-
-                K = (self.domain[0].K1+self.domain[0].K2
-                     +diag_a.dot(self.domain[1].K2)
-                     +self.stern.K1+self.stern.K2
-                     +self.robin.K1+self.robin.K2) #wrapped
-                b = (self.domain[0].b1+self.domain[0].b2
-                     +diag_f.dot(self.domain[1].b2)
-                     +self.stern.b1+self.stern.b2
-                     +self.robin.b1*(sigma_n/sigma_solid)+self.robin.b2) #wrapped
-                K,b = set_first_kind_bc(self.dirichlet,K,b)
-                self.sol[i][j] = np.reshape(solve_system(K,b),(n_node,-1))
-
-                #update u_n and sigma_n
-                u_1[:] = u_n
-                u_n = self.sol[i][j][self.mesh.is_on_water,0]
-                sigma_1 = sigma_n
-                sigma_n = sigma_n*5
-                sigma_n = np.min([np.abs(sigma_n),np.abs(sigma_diffuse)])
-                sigma_n *= np.sign(sigma_solid)
-
-                #check convergence
-                if np.linalg.norm(u_n)>0:
-                    rel_error=np.linalg.norm(u_n-u_1)/np.linalg.norm(u_n)
+                #compute relative error
+                if np.linalg.norm(u_i)>0:
+                    rel_error = np.linalg.norm(u_i-u_1)/np.linalg.norm(u_i)
                 else:
-                    rel_error=0.0
-                print('Relative error is',rel_error)
+                    rel_error = 0.0
+                
+                #check convergence
                 if (sigma_1==-sigma_diffuse)&(rel_error<0.05):
-                    print('Solution is converged')
-                    print('')
-                    del self.sol[i][j+1:]
                     break
-                print('')
+
+            elapsed = time.time()-start
+            print('Final relative error is {0:.2f}'.format(rel_error))
+            print('Time elapsed ',elapsed,'sec')
+            print('')
+
+        self.ratio = ratio
+        self.sol = sol
+
+#     def solve_1(self,ratio,sigma_init=0.002e-2,max_iter=20):
+#         n_node = len(self.mesh.nodes)
+#         n_rep = len(self.pde.c_x[list(self.pde.c_x.keys())[0]])
+
+#         sigma_solid = self.pde.g_s['is_with_mixed_bound'][0]
+#         self.ratio = ratio
+#         self.sol = [[None]*max_iter for i in range(len(ratio))]
+
+#         x_n = self.mesh.nodes[self.mesh.is_on_water,0]
+#         y_n = self.mesh.nodes[self.mesh.is_on_water,1]
+
+#         for i in range(len(ratio)):
+#             sigma_diffuse = -sigma_solid*(1-ratio[i])
+#             sigma_n = np.min([np.abs(sigma_init),np.abs(sigma_diffuse)])
+#             sigma_n *= np.sign(sigma_solid)
+#             print('sigma_init',sigma_init,'sigma_solid',sigma_solid)
+
+#             u_1 = np.zeros(n_node,dtype=float)[self.mesh.is_on_water]
+#             u_n = np.zeros(n_node,dtype=float)[self.mesh.is_on_water]
+#             for j in range(max_iter):
+#                 print('='*20+' ITERATION #',j+1,' '+'='*20)
+#                 #print('sigma_n',sigma_n,'-sigma_diffuse',-sigma_diffuse)
+#                 print('Current sigma is:',sigma_n)
+#                 print('Target sigma is:',-sigma_diffuse)
+#                 print('')
+
+#                 #a_n = self.pde.a_n['is_on_water'][0][0](x_n,y_n,u_n)
+#                 #f_n = self.pde.f_n['is_on_water'][0](x_n,y_n,u_n)
+#                 a_n = self.pde.func_a(x_n,y_n,u_n)
+#                 f_n = self.pde.func_f(x_n,y_n,u_n)
+
+#                 diag_a = np.zeros((n_node,n_rep),dtype=float)
+#                 diag_f = np.zeros((n_node,n_rep),dtype=float)
+
+#                 diag_a[self.mesh.is_on_water,0] = a_n
+#                 diag_f[self.mesh.is_on_water,0] = f_n
+
+#                 diag_a = sparse.diags(diag_a.ravel())
+#                 diag_f = sparse.diags(diag_f.ravel())
+
+#                 K = (self.domain[0].K1+self.domain[0].K2
+#                      +diag_a.dot(self.domain[1].K2)
+#                      +self.stern.K1+self.stern.K2
+#                      +self.robin.K1+self.robin.K2) #wrapped
+#                 b = (self.domain[0].b1+self.domain[0].b2
+#                      +diag_f.dot(self.domain[1].b2)
+#                      +self.stern.b1+self.stern.b2
+#                      +self.robin.b1*(sigma_n/sigma_solid)+self.robin.b2) #wrapped
+#                 K,b = set_first_kind_bc(self.dirichlet,K,b,verb=0)
+#                 self.sol[i][j] = np.reshape(solve_system(K,b,verb=0),(n_node,-1))
+
+#                 #update u_n and sigma_n
+#                 u_1[:] = u_n
+#                 u_n = self.sol[i][j][self.mesh.is_on_water,0]
+#                 sigma_1 = sigma_n
+#                 sigma_n = sigma_n*5
+#                 sigma_n = np.min([np.abs(sigma_n),np.abs(sigma_diffuse)])
+#                 sigma_n *= np.sign(sigma_solid)
+
+#                 #check convergence
+#                 if np.linalg.norm(u_n)>0:
+#                     rel_error=np.linalg.norm(u_n-u_1)/np.linalg.norm(u_n)
+#                 else:
+#                     rel_error=0.0
+#                 print('Relative error is',rel_error)
+#                 if (sigma_1==-sigma_diffuse)&(rel_error<0.05):
+#                     print('Solution is converged')
+#                     print('')
+#                     del self.sol[i][j+1:]
+#                     break
+#                 print('')
 
 
 class PerturbFEM(FEM):
     def __init__(self,mesh,pde):
-#         ratio = [1.0] #be careful it is fixed
-#         freq = [3e4] #be careful it is fixed
-#         sigma_solid = -0.01 #be careful it is fixed
-        
+        #ratio = [1.0] #be careful it is fixed
+        #freq = [3e4] #be careful it is fixed
+        #sigma_solid = -0.01 #be careful it is fixed
+
         pnp1,pnp2 = pde.decompose()
         d1 = Domain(mesh,pnp1)
         d2 = Domain(mesh,pnp2)
@@ -629,32 +799,29 @@ class PerturbFEM(FEM):
         self.robin = robin
         self.dirichlet = dirichlet
 
-    def solve(self,ratio,freq,stat=[]):
+    def solve(self,ratio,freq,stat=None,n_proc=1):
         mesh = self.mesh
         pde = self.pde
-        n_node = len(mesh.nodes)
-        n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
+        sol = [None]*len(ratio)
 
-        self.ratio = ratio
-        self.freq = freq
-        self.sol = [[None]*len(freq) for i in range(len(ratio))]
-
-        x = mesh.elem_mids[mesh.is_in_water,0]
-        y = mesh.elem_mids[mesh.is_in_water,0]
         #sigma_solid is not used when is_solid_metal is True
         for i in range(len(ratio)):
-            if type(stat) is list:
-                pot = np.zeros((len(mesh.elements),3))[mesh.is_in_water,:]
+            if type(stat) is list or stat is None:
+                pot = np.zeros((np.sum(mesh.is_in_water),3),dtype=float)
             elif type(stat) is str:
                 pot = mesh.grad2d(np.real(np.load(stat)))[mesh.is_in_water,:]
             else:
                 pot = mesh.grad2d(stat.sol[i][-1][:,0])[mesh.is_in_water,:]
 
-            for k in range(n_rep-2):
-                c_x = pde.c_x['is_in_water'][k][-2](x,y,pot[:,0])
-                c_y = pde.c_y['is_in_water'][k][-2](x,y,pot[:,0])
-                alpha_x = pde.alpha_x['is_in_water'][k][k](x,y,pot[:,1])
-                alpha_y = pde.alpha_y['is_in_water'][k][k](x,y,pot[:,2])
+            for k in range(self.domain[1].c_x.shape[1]-2):
+                #c_x = pde.c_x['is_in_water'][k][-2](x,y,pot[:,0],k)
+                #c_y = pde.c_y['is_in_water'][k][-2](x,y,pot[:,0],k)
+                #alpha_x = pde.alpha_x['is_in_water'][k][k](x,y,pot[:,1],k)
+                #alpha_y = pde.alpha_y['is_in_water'][k][k](x,y,pot[:,2],k)
+                c_x = pde.func_c(x=[],y=[],pot=pot[:,0],i=k)
+                c_y = pde.func_c(x=[],y=[],pot=pot[:,0],i=k)
+                alpha_x = pde.func_alpha(x=[],y=[],grad=pot[:,1],i=k)
+                alpha_y = pde.func_alpha(x=[],y=[],grad=pot[:,2],i=k)
                 self.domain[1].c_x[mesh.is_in_water,k,-2] = c_x
                 self.domain[1].c_y[mesh.is_in_water,k,-2] = c_y
                 self.domain[1].alpha_x[mesh.is_in_water,k,k] = alpha_x
@@ -665,174 +832,221 @@ class PerturbFEM(FEM):
 
             d2 = self.domain[1]
             d2.K1,d2.K2,d2.b1,d2.b2 = assemble_Ke2d(mesh,d2)
-            for j in range(len(freq)):
-                print('='*20+' FREQUENCY #',j+1,' '+'='*20)
-                print('Current ratio is:',ratio[i])
-                print('Current frequency is:',freq[i],'rad/s')
-                print('')
 
-                #multipler to rows of domain[0].K2
-                diag_a = np.ones((n_node,n_rep),dtype=complex)
-                diag_a[:,:-2] = 1j*freq[j]
-                diag_a = sparse.diags(diag_a.flatten(order='C'))
-                
-                #multipler to cols of stern.K1
-                diag_s1 = np.ones((n_node,n_rep),dtype=float)
-                diag_s1[:,-2] = ratio[i]
-                diag_s1 = sparse.diags(diag_s1.flatten(order='C'))
+            sol[i] = []
+            func_pert = functools.partial(solve_pert,self.domain,self.stern,
+                                          self.robin,self.dirichlet,ratio[i]) #wrapped
 
-                #multipler to rows/cols of stern.K2
-                diag_s2 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s2[:,-1] = 1j*freq[j]
-                diag_s2 = sparse.diags(diag_s2.flatten(order='C'))
-            
-                #need to modify K to include sigma_stern and freq[i]
-                #need to modify b to include sigma_stern and freq[i]
-                print('Frequency',freq[j])
-                K = (self.domain[0].K1+diag_a.dot(self.domain[0].K2)
-                     +self.domain[1].K1
-                     +self.stern.K1.dot(diag_s1)+self.stern.K2.dot(diag_s2)
-                     +self.robin.K1+self.robin.K2)
-                b = (self.domain[0].b1+self.domain[0].b2
-                     +self.stern.b1+self.stern.b2
-                     +self.robin.b1+self.robin.b2)+0j 
-                K,b = set_first_kind_bc(self.dirichlet,K,b)
-                self.sol[i][j] = np.reshape(solve_system(K,b),(n_node,-1))
+            print('Computing frequency dependent solutions for:')
+            print('ratio: {0:.2f}'.format(ratio[i]))
+            string = 'freq [Hz] : {0:.2E} - {1:.2E} : {2:d} [min-max; #]'
+            print(string.format(freq[0],freq[-1],len(freq)))
+            print('This will take a while')
+            start = time.time()
 
+            if n_proc == 1:
+                for j in tqdm(range(len(freq))):
+                    sol[i].append(func_pert(freq[j]))
 
-    def test(self,ratio,freq):
-        for i in range(len(ratio)):
-            #sigma_stern and sigma_diffuse are not used because is_solid_metal
-            #is True
-            sigma_stern = -ratio[i]*sigma_solid
-            sigma_diffuse = -(1.0-ratio[i])*sigma_solid #0 if ratio is 1.0
+            else:
+                pool = mp.Pool(processes=n_proc)
+                for result in tqdm(pool.imap_unordered(func_pert,freq),
+                                        total=len(freq)):
+                    sol[i].append(result)
 
-            #placeholder to update domain with respecto static solution
-            #placeholder to update dirichlet to modify boundary condition
+                pool.close()
+                pool.join()
 
-            for j in range(len(freq)):
-                #multipler to rows of domain.K2
-                diag = np.ones((n_node,n_rep),dtype=complex)
-                diag[:,:-2] = 1j*freq[j]
-                diag = sparse.diags(diag.flatten(order='C'))
+            elapsed = time.time()-start
+            print('Time elapsed ',elapsed,'sec')
+            print('')
+            #convert sol[i] from list to ndarray.shape (n_freq,n_node,n_rep)
+            sol[i] = np.array(sol[i])
 
-                #multipler to rows/cols of stern.K1
-                diag_s1 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s1[:,-2] = sigma_stern
-                diag_s1 = sparse.diags(diag_s1.flatten(order='C'))
-                
-                #multipler to rows/cols of stern.K2
-                diag_s2 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s2[:,-1] = 1j*freq[j]
-                diag_s2 = sparse.diags(diag_s2.flatten(order='C'))
-            
-                #need to modify K to include sigma_stern and freq[i]
-                #need to modify b to include sigma_stern and freq[i]
-                print('Frequency',freq[j])
-                K = (domain.K1+diag.dot(domain.K2)
-                     +stern.K1.dot(diag_s1)+stern.K2.dot(diag_s2)
-                     +robin.K1+robin.K2)
-                b = (domain.b1+domain.b2
-                     +stern.b1+stern.b2
-                     +robin.b1+robin.b2)+0j 
-                K,b = set_first_kind_bc(dirichlet,K,b)
+        return sol
 
+    def ftsolve(self,ratio,freqtime,stat=None,signal=None,ft='dlf',ftarg={},
+                n_proc=1):
+        time,freq,ft,ftarg = self.argft(freqtime,signal,ft,ftarg)
+        self.ratio = ratio
+        self.freqtime = freqtime
+        self.stat = stat
+        self.signal = signal
 
-class PerturbFEM_1(FEM):
-    def __init__(self,mesh,pde):
-        ratio = [1.0] #be careful it is fixed
-        freq = [3e4] #be careful it is fixed
-        sigma_solid = -0.01 #be careful it is fixed
+        self.time = time
+        self.freq = freq
+        self.ft = ft
+        self.ftarg = ftarg
+
+        self.fsol = self.solve(ratio,freq,stat,n_proc)
+        self.tsol = self.transform(self.fsol,freq,time,signal,ft,ftarg)
+
+    def argft(self,freqtime,signal=None,ft='dlf',ftarg={}):
+        #define more default parameters
+        if ft=='dlf' and 'dlf' not in ftarg.keys():
+            ftarg = {'dlf': 'key_81_CosSin_2009'}
+
+        #prepare parameters used in fourier transform
+        if signal is not None:
+            time,freq,ft,ftarg = check_time(freqtime,signal,ft,ftarg,verb=3)
+            print('')
+        else:
+            time = None
+            freq = freqtime
+
+        return time,freq,ft,ftarg
+
+    def transform(self,fsol,freq,time,signal=None,ft='dlf',ftarg={}):
+        tsol = [None]*len(fsol)
+        if signal is not None:
+            for i in range(len(fsol)):
+                mask = self.mesh.is_on_stern
+                fEM = np.reshape(fsol[i][:,mask,:],(len(freq),-1))
+                off = np.empty(fEM.shape[1])
+
+                tEM,conv = tem(fEM,off,freq,time,signal,ft,ftarg)
+                # In case of QWE/QUAD, print Warning if not converged
+                conv_warning(conv, ftarg, 'Fourier', verb=3)
+                tsol[i] = np.reshape(tEM,(len(time),np.sum(mask),-1))
+
+        return tsol
+
+    def animate(self,freq=[],time=[],i=0,xlim=[],ylim=[],xscale='linear',
+                yscale='linear'):
+        nodes = self.mesh.nodes[self.mesh.is_on_stern,:]
+        if yscale=='log':
+            fsol = np.abs(self.fsol[i][:,self.mesh.is_on_stern,:])
+            tsol = np.abs(self.tsol[i])
+        else:
+            fsol = self.fsol[i][:,self.mesh.is_on_stern,:]
+            tsol = self.tsol[i]
         
-        n_node = len(mesh.nodes)
-        n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
+        f_ind = [0]*len(freq)
+        for j in range(len(freq)):
+            f_ind[j] = np.argmin((self.freq-freq[j])**2)
         
-        domain = Domain(mesh,pde)
-        stern = Stern(mesh,pde)
-        robin = Robin(mesh,pde)
-        dirichlet = Dirichlet(mesh,pde)
-
-        domain.K1,domain.K2,domain.b1,domain.b2 = assemble_Ke2d(mesh,domain)
-        stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
-        robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
-
-        for i in range(len(ratio)):
-            #sigma_stern and sigma_diffuse are not used
-            #when is_solid_metal is True
-            sigma_stern = -ratio[i]*sigma_solid #0 if ration is 0.0
-            sigma_diffuse = -(1.0-ratio[i])*sigma_solid #0 if ratio is 1.0
-
-            #placeholder to update domain with respecto static solution
-            #placeholder to update dirichlet to modify boundary condition
-
-            for j in range(len(freq)):
-                #multipler to rows of domain.K2
-                diag = np.ones((n_node,n_rep),dtype=complex)
-                diag[:,:-2] = 1j*freq[j]
-                diag = sparse.diags(diag.flatten(order='C'))
-
-                #multipler to rows/cols of stern.K1
-                diag_s1 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s1[:,-2] = sigma_stern
-                diag_s1 = sparse.diags(diag_s1.flatten(order='C'))
-                
-                #multipler to rows/cols of stern.K2
-                diag_s2 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s2[:,-1] = 1j*freq[j]
-                diag_s2 = sparse.diags(diag_s2.flatten(order='C'))
-            
-                #need to modify K to include sigma_stern and freq[i]
-                #need to modify b to include sigma_stern and freq[i]
-                print('Frequency',freq[j])
-                K = (domain.K1+diag.dot(domain.K2)
-                     +stern.K1.dot(diag_s1)+stern.K2.dot(diag_s2)
-                     +robin.K1+robin.K2)
-                b = (domain.b1+domain.b2
-                     +stern.b1+stern.b2
-                     +robin.b1+robin.b2)+0j 
-                K,b = set_first_kind_bc(dirichlet,K,b)
-
-        self.mesh = mesh
-        self.pde = pde
-        self.domain = domain
-        self.stern = stern
-        self.robin = robin
-        self.dirichlet = dirichlet
-        self.sol = np.reshape(solve_system(K,b),(len(mesh.nodes),-1))
+        t_ind = [0]*len(time)
+        for j in range(len(time)):
+            t_ind[j] = np.argmin((self.time-time[j])**2)
         
-    def test(self,ratio,freq):
-        for i in range(len(ratio)):
-            #sigma_stern and sigma_diffuse are not used because is_solid_metal
-            #is True
-            sigma_stern = -ratio[i]*sigma_solid
-            sigma_diffuse = -(1.0-ratio[i])*sigma_solid #0 if ratio is 1.0
+        fig,ax = plt.subplots(2,2,sharex=False,figsize=(10,8))
+        axes = ax.flatten()
+        
+        labels = []
+        for j in range(len(freq)):
+            axes[0].plot(nodes[:,0],np.real(fsol[f_ind[j],:,-2]),'.')
+            axes[1].plot(nodes[:,0],np.real(fsol[f_ind[j],:,-1]),'.')
+            labels.append('$f=%.2e$ Hz'%(freq[j]))
+        #axes[1].legend(labels,loc='upper right',bbox_to_anchor=(1.75,0.75))
+        axes[0].legend(labels,loc='lower right')
+        
+        labels = []
+        for j in range(len(time)):
+            axes[2].plot(nodes[:,0],tsol[t_ind[j],:,-2],'.')
+            axes[3].plot(nodes[:,0],tsol[t_ind[j],:,-1],'.')
+            labels.append('$t=%.2e$ Hz'%(time[j]))
+        axes[2].legend(labels,loc='lower right')
 
-            #placeholder to update domain with respecto static solution
-            #placeholder to update dirichlet to modify boundary condition
+        if len(xlim)==2:
+            axes[0].set_xlim(xlim)
+            axes[1].set_xlim(xlim)
+            axes[2].set_xlim(xlim)
+            axes[3].set_xlim(xlim)
+        
+        if len(ylim)==2:
+            axes[0].set_ylim(ylim)
+            axes[1].set_ylim(ylim)
+            axes[2].set_ylim(ylim)
+            axes[3].set_ylim(ylim)
+        
+        axes[0].set_xscale(xscale)
+        axes[1].set_xscale(xscale)
+        axes[2].set_xscale(xscale)
+        axes[3].set_xscale(xscale)
+        
+        axes[0].set_yscale(yscale)
+        axes[1].set_yscale(yscale)
+        axes[2].set_yscale(yscale)
+        axes[3].set_yscale(yscale)
+        
+        axes[0].set_xlabel('X (m)')
+        axes[1].set_xlabel('X (m)')
+        axes[2].set_xlabel('X (m)')
+        axes[3].set_xlabel('X (m)')
+        
+        axes[0].set_ylabel('$\delta U_s \;(V)$')
+        axes[1].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        axes[2].set_ylabel('$\delta U_s \;(V)$')
+        axes[3].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
 
-            for j in range(len(freq)):
-                #multipler to rows of domain.K2
-                diag = np.ones((n_node,n_rep),dtype=complex)
-                diag[:,:-2] = 1j*freq[j]
-                diag = sparse.diags(diag.flatten(order='C'))
-
-                #multipler to rows/cols of stern.K1
-                diag_s1 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s1[:,-2] = sigma_stern
-                diag_s1 = sparse.diags(diag_s1.flatten(order='C'))
-                
-                #multipler to rows/cols of stern.K2
-                diag_s2 = np.ones((n_node,n_rep),dtype=complex)
-                diag_s2[:,-1] = 1j*freq[j]
-                diag_s2 = sparse.diags(diag_s2.flatten(order='C'))
+        #axes[0].set_ylabel('(V)')
+        #axes[1].set_ylabel('(C/m^2)')
+        #axes[2].set_ylabel('(V)')
+        #axes[3].set_ylabel('(C/m^2)')
+        
+        axes[0].set_title('Frequency Domain')
+        axes[1].set_title('Frequency Domain')
+        axes[2].set_title('Time Domain')
+        axes[3].set_title('Time Domain')
+        
+        plt.tight_layout()
+        plt.show()
             
-                #need to modify K to include sigma_stern and freq[i]
-                #need to modify b to include sigma_stern and freq[i]
-                print('Frequency',freq[j])
-                K = (domain.K1+diag.dot(domain.K2)
-                     +stern.K1.dot(diag_s1)+stern.K2.dot(diag_s2)
-                     +robin.K1+robin.K2)
-                b = (domain.b1+domain.b2
-                     +stern.b1+stern.b2
-                     +robin.b1+robin.b2)+0j 
-                K,b = set_first_kind_bc(dirichlet,K,b)
+        
+    def plot(self,x,y,i=0):
+        nodes = self.mesh.nodes[self.mesh.is_on_stern,:]
+        n_ind = np.argmin((nodes[:,0]-x)**2+(nodes[:,1]-y)**2)
+        fsol = self.fsol[i][:,self.mesh.is_on_stern,:]
+        tsol = self.tsol[i]
+
+        fig,ax = plt.subplots(2,2,figsize=(8,8))
+        axes = ax.flatten()
+
+        axes[0].plot(self.freq,np.real(fsol[:,n_ind,-2]),'.')
+        axes[1].plot(self.freq,np.real(fsol[:,n_ind,-1]),'.')
+        axes[2].plot(self.time,np.real(tsol[:,n_ind,-2]),'.')
+        axes[3].plot(self.time,np.real(tsol[:,n_ind,-1]),'.')
+
+        axes[0].set_xscale('log')
+        axes[1].set_xscale('log')
+        axes[2].set_xscale('log')
+        axes[3].set_xscale('log')
+
+        axes[0].set_xlabel('Frequency (Hz)')
+        axes[1].set_xlabel('Frequency (Hz)')
+        axes[2].set_xlabel('Time (s)')
+        axes[3].set_xlabel('Time (s)')
+        
+        axes[0].set_ylabel('$\delta U_s \;(V)$')
+        axes[1].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        axes[2].set_ylabel('$\delta U_s \;(V)$')
+        axes[3].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        
+        #axes[0].set_ylabel('(V)')
+        #axes[1].set_ylabel('(C/m^2)')
+        #axes[2].set_ylabel('(V)')
+        #axes[3].set_ylabel('(C/m^2)')
+        
+        #axes[0].set_title('(X,Y) = ({0:.2e},{1:.2e})'.format(x,y))
+        #axes[1].set_title('(X,Y) = ({0:.2e},{1:.2e})'.format(x,y))
+        
+        axes[0].set_title('$\delta U_s$')
+        axes[1].set_title('$\delta \Sigma_s$')
+        axes[2].set_title('$\delta U_s$')
+        axes[3].set_title('$\delta \Sigma_s$')
+
+        plt.tight_layout()
+        plt.show()
+
+
+class Dict2Class(object):
+    def __init__(self,my_dict):
+        for key in my_dict:
+            setattr(self,key,my_dict[key])
+
+
+def Class2Dict(instance):
+    my_dict = {}
+    for attr in instance.__dict__.keys():
+        my_dict[attr] = instance.__dict__[attr]
+    return my_dict

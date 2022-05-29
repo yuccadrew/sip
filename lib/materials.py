@@ -1,4 +1,4 @@
-import copy
+import copy,functools
 import numpy as np
 from scipy import constants
 from scipy.sparse import csr_matrix
@@ -22,6 +22,42 @@ flatten_list = lambda irregular_list:[element for item in irregular_list \
                    if type(irregular_list) is list else [irregular_list]
 
 
+def build_a(physics,x,y,u,*args,**kwargs): #generalized PB equation
+    n_ion = len(physics.c_ion)
+    a = np.zeros_like(np.array(u))
+    for i in range(n_ion):
+        k = -physics.Q_ion[i]/Consts.k/physics.temperature
+        a += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
+
+    return a
+
+
+def build_f(physics,x,y,u,*args,**kwargs): #generalized PB equation
+    n_ion = len(physics.c_ion)
+    f = np.zeros_like(np.array(u))
+    for i in range(n_ion):
+        k = -physics.Q_ion[i]/Consts.k/physics.temperature
+        f += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
+
+    return f
+
+
+def build_c(physics,x,y,pot,i):
+    v = np.exp(-physics.Q_ion[i]*pot/Consts.k/physics.temperature)
+    c = physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i]*v #c or C_ion
+    return c
+
+
+def build_alpha(physics,x,y,grad,i):
+    alpha = physics.mu_a[i]*physics.z_ion[i]*grad #grad_x or grad_y
+    return alpha
+
+
+def build_s(physics,x,y,u,*args,**kwargs): #fixed potential at infinity
+    s = -physics.e_0[0]*x-physics.e_0[1]*y
+    return s
+
+
 class Domain():
     def __init__(self,mesh,pde):
         #combine mesh and pde to determine domain attributes
@@ -36,19 +72,19 @@ class Domain():
         n_elem = len(mesh.elements)
         n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
 
-        self.c_x = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.c_y = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.alpha_x = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.alpha_y = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.beta_x = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.beta_y = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.gamma_x = np.zeros((n_elem,n_rep),dtype=float)
-        self.gamma_y = np.zeros((n_elem,n_rep),dtype=float)
-        self.a = np.zeros((n_elem,n_rep,n_rep),dtype=float)
-        self.f = np.zeros((n_elem,n_rep),dtype=float)
-        self.a_n = np.zeros((n_node,n_rep,n_rep),dtype=float) #a on nodes
-        self.f_n = np.zeros((n_node,n_rep),dtype=float) #f on nodes
-        self.f_d = np.zeros((n_node,n_rep),dtype=float) #f on point sources
+        self.c_x = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.c_y = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.alpha_x = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.alpha_y = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.beta_x = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.beta_y = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.gamma_x = np.zeros((n_elem,n_rep),dtype=pde.dtype)
+        self.gamma_y = np.zeros((n_elem,n_rep),dtype=pde.dtype)
+        self.a = np.zeros((n_elem,n_rep,n_rep),dtype=pde.dtype)
+        self.f = np.zeros((n_elem,n_rep),dtype=pde.dtype)
+        self.a_n = np.zeros((n_node,n_rep,n_rep),dtype=pde.dtype) #a on nodes
+        self.f_n = np.zeros((n_node,n_rep),dtype=pde.dtype) #f on nodes
+        self.f_d = np.zeros((n_node,n_rep),dtype=pde.dtype) #f on point sources
 
         attributes = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y',
                       'gamma_x','gamma_y','a','f','a_n','f_n','f_d']
@@ -74,8 +110,11 @@ class Domain():
 
                 for i in range(len(val)):
                     if type(val[i]) is not list:
-                        if callable(val[i]):
-                            self.__dict__[attr][mask,i] = val[i](x,y,0)
+                        if type(val[i]) is str:
+                            func = pde.__dict__[val[i]]
+                            self.__dict__[attr][mask,i] = func(x,y,0,i)
+                        elif callable(val[i]):
+                            self.__dict__[attr][mask,i] = val[i](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i] = val[i]
 
@@ -83,8 +122,11 @@ class Domain():
                     
                     for j in range(len(val[i])):
                         #print(attr,ky,'[',i,',',j,']',val[i][j])
-                        if callable(val[i][j]):
-                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0)
+                        if type(val[i][j]) is str:
+                            func = pde.__dict__[val[i][j]]
+                            self.__dict__[attr][mask,i,j] = func(x,y,0,i)
+                        elif callable(val[i][j]):
+                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i,j] = val[i][j]
 
@@ -201,16 +243,16 @@ class Stern():
         n_edge = len(mesh.edges)
         n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
 
-        self.c_x = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.c_y = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.alpha_x = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.alpha_y = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.beta_x = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.beta_y = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.gamma_x = np.zeros((n_edge,n_rep),dtype=float)
-        self.gamma_y = np.zeros((n_edge,n_rep),dtype=float)
-        self.a = np.zeros((n_edge,n_rep,n_rep),dtype=float)
-        self.f = np.zeros((n_edge,n_rep),dtype=float)
+        self.c_x = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.c_y = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.alpha_x = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.alpha_y = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.beta_x = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.beta_y = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.gamma_x = np.zeros((n_edge,n_rep),dtype=pde.dtype)
+        self.gamma_y = np.zeros((n_edge,n_rep),dtype=pde.dtype)
+        self.a = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
+        self.f = np.zeros((n_edge,n_rep),dtype=pde.dtype)
         
         attributes = ['c_x','c_y','alpha_x','alpha_y','beta_x','beta_y',
                       'gamma_x','gamma_y','a','f']
@@ -237,17 +279,23 @@ class Stern():
 
                 for i in range(len(val)):
                     if type(val[i]) is not list:
-                        if callable(val[i]):
-                            self.__dict__[attr][mask,i] = val[i](x,y,0)
+                        if type(val[i]) is str:
+                            func = pde.__dict__[val[i]]
+                            self.__dict__[attr][mask,i] = func(x,y,0,i)
+                        elif callable(val[i]):
+                            self.__dict__[attr][mask,i] = val[i](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i] = val[i]
-                        
+
                         continue
 
                     for j in range(len(val[i])):
                         #print(attr,ky,'[',i,',',j,']',val[i][j])
-                        if callable(val[i][j]):
-                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0)
+                        if type(val[i][j]) is str:
+                            func = pde.__dict__[val[i][j]]
+                            self.__dict__[attr][mask,i,j] = func(x,y,0,i)
+                        elif callable(val[i][j]):
+                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i,j] = val[i][j]
 
@@ -361,8 +409,8 @@ class Robin():
         n_edge = len(mesh.edges)
         n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
         
-        self.g_s = np.zeros((n_edge,n_rep),dtype=float)
-        self.q_s = np.zeros((n_edge,n_rep,n_rep),dtype=float)
+        self.g_s = np.zeros((n_edge,n_rep),dtype=pde.dtype)
+        self.q_s = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
         
         attributes = ['g_s','q_s']
 
@@ -383,16 +431,22 @@ class Robin():
 
                 for i in range(len(val)):
                     if type(val[i]) is not list:
-                        if callable(val[i]):
-                            self.__dict__[attr][mask,i] = val[i](x,y,0)
+                        if type(val[i]) is str:
+                            func = pde.__dict__[val[i]]
+                            self.__dict__[attr][mask,i] = func(x,y,0,i)
+                        elif callable(val[i]):
+                            self.__dict__[attr][mask,i] = val[i](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i] = val[i]
                         continue
-                        
+
                     for j in range(len(val[i])):
                         #print(attr,ky,'[',i,',',j,']',val[i][j])
-                        if callable(val[i][j]):
-                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0)
+                        if type(val[i][j]) is str:
+                            func = pde.__dict__[val[i][j]]
+                            self.__dict__[attr][mask,i,j] = func(x,y,0,i)
+                        elif callable(val[i][j]):
+                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i,j] = val[i][j]
 
@@ -495,7 +549,7 @@ class Dirichlet():
 
         #declare all attributes first
         self.on_first_kind_bc = np.zeros((n_node,n_rep),dtype=bool)
-        self.s_n = np.zeros((n_node,n_rep),dtype=float)
+        self.s_n = np.zeros((n_node,n_rep),dtype=pde.dtype)
 
         #update dirichlet attributes accordingly
         attributes = ['s_n']
@@ -517,11 +571,14 @@ class Dirichlet():
 
                         self.on_first_kind_bc[mask,i] = True
 
-                        if callable(val[i]):
-                            self.__dict__[attr][mask,i] = val[i](x,y,0)
+                        if type(val[i]) is str:
+                            func = pde.__dict__[val[i]]
+                            self.__dict__[attr][mask,i] = func(x,y,0,i)
+                        elif callable(val[i]):
+                            self.__dict__[attr][mask,i] = val[i](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i] = val[i]
-                        
+
                         continue
 
                     for j in range(len(val[i])):
@@ -531,8 +588,11 @@ class Dirichlet():
                         #print(attr,ky,'[',i,',',j,']',val_i[j])
                         self.on_first_kind_bc[mask,i,j] = True
 
-                        if callable(val[i][j]):
-                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0)
+                        if type(val[i][j]) is str:
+                            func = pde.__dict__[val[i][j]]
+                            self.__dict__[attr][mask,i,j] = func(x,y,0,i)
+                        elif callable(val[i][j]):
+                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0,i)
                         else:
                             self.__dict__[attr][mask,i,j] = val[i][j]
 
@@ -563,58 +623,61 @@ class Dirichlet():
 #         print('')
 #         return K,b
 
-    def update(self,*args): #placeholder
-        if args:
-            attributes = args
-        else:
-            attributes = self.__dict__.keys()
+#     def update(self,*args): #placeholder
+#         if args:
+#             attributes = args
+#         else:
+#             attributes = self.__dict__.keys()
 
-        #combine mesh and pde to determine dirichlet attributes
-        n_node = len(mesh.nodes)
-        n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
+#         #combine mesh and pde to determine dirichlet attributes
+#         n_node = len(mesh.nodes)
+#         n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
 
-        #declare all attributes first
-        self.on_first_kind_bc = np.zeros((n_node,n_rep),dtype=bool)
-        self.s_n = np.zeros((n_node,n_rep),dtype=float)
+#         #declare all attributes first
+#         self.on_first_kind_bc = np.zeros((n_node,n_rep),dtype=bool)
+#         self.s_n = np.zeros((n_node,n_rep),dtype=pde.dtype)
 
-        #update dirichlet attributes accordingly
-        attr_1 = ['s_n']
+#         #update dirichlet attributes accordingly
+#         attr_1 = ['s_n']
         
-        for attr in attributes:
-            if attr not in attr_1:
-                continue
+#         for attr in attributes:
+#             if attr not in attr_1:
+#                 continue
 
-            for ky in pde.__dict__[attr].keys():
-                val = pde.__dict__[attr][ky]
-                mask = mesh.__dict__[ky]
-                x = mesh.nodes[mask,0]
-                y = mesh.nodes[mask,1]
+#             for ky in pde.__dict__[attr].keys():
+#                 val = pde.__dict__[attr][ky]
+#                 mask = mesh.__dict__[ky]
+#                 x = mesh.nodes[mask,0]
+#                 y = mesh.nodes[mask,1]
 
-                for i in range(len(val)):
-                    if type(val[i]) is not list:
-                        if val[i] == None:
-                            continue
+#                 for i in range(len(val)):
+#                     if type(val[i]) is not list:
+#                         if val[i] == None:
+#                             continue
 
-                        self.on_first_kind_bc[mask,i] = True
+#                         self.on_first_kind_bc[mask,i] = True
 
-                        if callable(val[i]):
-                            self.__dict__[attr][mask,i] = val[i](x,y,0)
-                        else:
-                            self.__dict__[attr][mask,i] = val[i]
-                        
-                        continue
+#                         if callable(val[i]):
+#                             self.__dict__[attr][mask,i] = val[i](x,y,0,i)
+#                         else:
+#                             self.__dict__[attr][mask,i] = val[i]
 
-                    for j in range(len(val[i])):
-                        if val[i][j] == None:
-                            continue
+#                         continue
 
-                        #print(attr,ky,'[',i,',',j,']',val_i[j])
-                        self.on_first_kind_bc[mask,i,j] = True
+#                     for j in range(len(val[i])):
+#                         if val[i][j] == None:
+#                             continue
 
-                        if callable(val[i][j]):
-                            self.__dict__[attr][mask,i,j] = val[i][j](x,y,0)
-                        else:
-                            self.__dict__[attr][mask,i,j] = val[i][j]
+#                         #print(attr,ky,'[',i,',',j,']',val_i[j])
+#                         self.on_first_kind_bc[mask,i,j] = True
+
+#                         if callable(val[i][j]):
+#                             self.__dict__[attr][mask,i,j] = val[i][j](x,y,0,i)
+#                         else:
+#                             self.__dict__[attr][mask,i,j] = val[i][j]
+
+    def update(self):
+        pass
 
     def visualize(self,mesh,pde):
 #         mesh = self.mesh
@@ -672,8 +735,52 @@ class Dirichlet():
 
 class PDE():
     def __init__(self,**kwargs): #avoid long list of inputs
+        self.dtype = None
+        self.shape = None
         for key,value in kwargs.items():
             setattr(self,key,value)
+            #print(key,value,type(value))
+            if type(value) is dict:
+                for ky in value.keys():
+                    if type(value[ky]) is list:
+                        #print(ky,flatten_list(value[ky]))
+                        for val in flatten_list(value[ky]):
+                            if type(val) is complex:
+                                self.dtype = complex
+
+                        if self.shape is None:
+                            self.shape = (len(value),len(value))
+
+        if self.dtype is None:
+            self.dtype = float
+        
+        if self.shape is None:
+            self.shape = (0,0)
+    
+    def _set_dtype(self):
+        self.dtype = float
+        for attr in self.__dict__.keys():
+            #print(attr,self.__dict__[attr].keys())
+            if type(self.__dict__[attr]) is dict:
+                for ky in self.__dict__[attr].keys():
+                    if type(self.__dict__[attr][ky]) is list:
+                        #print(attr,ky,self.__dict__[attr][ky])
+                        for val in flatten_list(self.__dict__[attr][ky]):
+                            if type(val) is complex:
+                                self.dtype = complex
+                                return
+
+    def _set_shape(self):
+        self.shape = (0,0)
+        for attr in self.__dict__.keys():
+            if type(self.__dict__[attr]) is dict:
+                #print(attr,self.__dict__[attr].keys())
+                for ky in self.__dict__[attr].keys():
+                    if type(self.__dict__[attr][ky]) is list:
+                        #print(attr,ky,self.__dict__[attr][ky])
+                        val = self.__dict__[attr][ky]
+                        self.shape = (len(val),len(val))
+                        return
 
     def visualize(self,*args):
         if args:
@@ -696,7 +803,12 @@ class PDE():
                 for i in range(len(val)):
                     print('[',end='')
                     if type(val[i]) is not list:
-                        if callable(val[i]):
+                        if type(val[i]) is str:
+                            print('{0:>8}()'.format(val[i]),end='')
+                        elif type(val[i]) is functools.partial:
+                            print('{0:>8}()'.format(val[i].func.__name__),
+                                  end='') #wrapped
+                        elif callable(val[i]):
                             print('{0:>8}()'.format(val[i].__name__),end='')
                         elif val[i] is None:
                             print('{0:>10}'.format('None'),end='')
@@ -705,10 +817,15 @@ class PDE():
 
                         print(']')
                         continue
-                    
+
                     for j in range(len(val[i])):
                         #print(val[i][j])
-                        if callable(val[i][j]):
+                        if type(val[i][j]) is str:
+                            print('{0:>8}()'.format(val[i][j]),end='')
+                        elif type(val[i][j]) is functools.partial:
+                            print('{0:>14}()'.format(val[i][j].func.__name__),
+                                  end='') #wrapped
+                        elif callable(val[i][j]):
                             print('{0:>14}()'.format(val[i][j].__name__),end='')
                         elif val[i][j] is None:
                             print('{0:>16}'.format('None'),end='')
@@ -725,6 +842,9 @@ class StaticPDE(PDE):
         for attr in attributes:
             self.__dict__[attr] = {}
 
+        self.func_a = functools.partial(build_a,physics)
+        self.func_f = functools.partial(build_f,physics)
+
         self._set_static_air(physics)
         self._set_static_water(physics)
         self._set_static_solid(physics)
@@ -734,48 +854,52 @@ class StaticPDE(PDE):
         self._set_static_metal_bound(physics) #Dirichlet B.C.
         self._set_static_outer_bound(physics) #Dirichlet B.C.
         self._set_static_unused_nodes(physics) #Dirichlet B.C.
+        self._set_dtype()
+        self._set_shape()
 
-    @staticmethod
-    def _build_a(physics):
-        def build_a(x,y,u): #generalized PB equation
-            n_ion = len(physics.c_ion)
-            a = np.zeros_like(x)
-            for i in range(n_ion):
-                k = -physics.Q_ion[i]/Consts.k/physics.temperature
-                a += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
+#     @staticmethod
+#     def _build_a(physics):
+#         #global build_a
+#         def build_a(x,y,u): #generalized PB equation
+#             n_ion = len(physics.c_ion)
+#             a = np.zeros_like(x)
+#             for i in range(n_ion):
+#                 k = -physics.Q_ion[i]/Consts.k/physics.temperature
+#                 a += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
 
-#             i = 1
-#             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-#             a1 = (2.0*physics.Q_ion[i]**2*physics.C_ion[i]/Consts.k
-#                   /physics.temperature*np.cosh(v)) #wrapped
+# #             i = 1
+# #             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
+# #             a1 = (2.0*physics.Q_ion[i]**2*physics.C_ion[i]/Consts.k
+# #                   /physics.temperature*np.cosh(v)) #wrapped
 
-#             print('a')
-#             print(a)
-#             print(a1)
-            return a
+# #             print('a')
+# #             print(a)
+# #             print(a1)
+#             return a
 
-        return build_a
+#         return build_a
 
-    @staticmethod
-    def _build_f(physics):
-        def build_f(x,y,u): #generalized PB equation
-            n_ion = len(physics.c_ion)
-            f = np.zeros_like(x)
-            for i in range(n_ion):
-                k = -physics.Q_ion[i]/Consts.k/physics.temperature
-                f += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
+#     @staticmethod
+#     def _build_f(physics):
+#         #global build_f
+#         def build_f(x,y,u): #generalized PB equation
+#             n_ion = len(physics.c_ion)
+#             f = np.zeros_like(x)
+#             for i in range(n_ion):
+#                 k = -physics.Q_ion[i]/Consts.k/physics.temperature
+#                 f += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
 
-#             i = 1
-#             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-#             f1 = (-2.0*physics.Q_ion[i]*physics.C_ion[i]
-#                   *(np.sinh(v)-np.cosh(v))*v) #wrapped
+# #             i = 1
+# #             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
+# #             f1 = (-2.0*physics.Q_ion[i]*physics.C_ion[i]
+# #                   *(np.sinh(v)-np.cosh(v))*v) #wrapped
 
-#             print('f')
-#             print(f)
-#             print(f1)
-            return f
+# #             print('f')
+# #             print(f)
+# #             print(f1)
+#             return f
 
-        return build_f
+#         return build_f
 
     def _set_static_air(self,physics):
         n_ion = len(physics.c_ion)
@@ -786,7 +910,7 @@ class StaticPDE(PDE):
 
         self.c_x['is_in_air'][-2][-2] = Consts.p
         self.c_y['is_in_air'][-2][-2] = Consts.p
-    
+
     def _set_static_water(self,physics):
         n_ion = len(physics.c_ion)
         n_rep = n_ion+2
@@ -798,8 +922,10 @@ class StaticPDE(PDE):
 
         self.c_x['is_in_water'][-2][-2] = physics.perm_a
         self.c_y['is_in_water'][-2][-2] = physics.perm_a
-        self.a['is_in_water'][-2][-2] = StaticPDE._build_a(physics)
-        self.f['is_in_water'][-2] = StaticPDE._build_f(physics)
+        #self.a['is_in_water'][-2][-2] = StaticPDE._build_a(physics)
+        #self.f['is_in_water'][-2] = StaticPDE._build_f(physics)
+        self.a['is_in_water'][-2][-2] = 'func_a'
+        self.f['is_in_water'][-2] = 'func_f'
 
     def _set_static_solid(self,physics):
         n_ion = len(physics.c_ion)
@@ -871,6 +997,10 @@ class PerturbPDE(PDE):
         for attr in attributes:
             self.__dict__[attr] = {}
 
+        self.func_c = functools.partial(build_c,physics)
+        self.func_alpha = functools.partial(build_alpha,physics)
+        self.func_s = functools.partial(build_s,physics)
+
         self._set_perturb_air(physics)
         self._set_perturb_water(physics)
         self._set_perturb_solid(physics)
@@ -880,31 +1010,36 @@ class PerturbPDE(PDE):
         self._set_perturb_metal_bound(physics)
         self._set_perturb_outer_bound(physics)
         self._set_perturb_unused_nodes(physics)
+        self._set_dtype()
+        self._set_shape()
 
-    @staticmethod
-    def _build_c(physics,i):
-        def build_c(x,y,pot):
-            v = np.exp(-physics.Q_ion[i]*pot/Consts.k/physics.temperature)
-            c = physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i]*v #c or C_ion
-            return c
+#     @staticmethod
+#     def _build_c(physics,i):
+#         #global build_c
+#         def build_c(x,y,pot):
+#             v = np.exp(-physics.Q_ion[i]*pot/Consts.k/physics.temperature)
+#             c = physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i]*v #c or C_ion
+#             return c
 
-        return build_c
+#         return build_c
 
-    @staticmethod
-    def _build_alpha(physics,i):
-        def build_alpha(x,y,grad):
-            alpha = physics.mu_a[i]*physics.z_ion[i]*grad #grad_x or grad_y
-            return alpha
+#     @staticmethod
+#     def _build_alpha(physics,i):
+#         #global build_alpha
+#         def build_alpha(x,y,grad):
+#             alpha = physics.mu_a[i]*physics.z_ion[i]*grad #grad_x or grad_y
+#             return alpha
 
-        return build_alpha
+#         return build_alpha
 
-    @staticmethod
-    def _build_s(physics):
-        def build_s(x,y,u):
-            s = -physics.e_0[0]*x-physics.e_0[1]*y
-            return s
+#     @staticmethod
+#     def _build_s(physics):
+#         #global build_s
+#         def build_s(x,y,u):
+#             s = -physics.e_0[0]*x-physics.e_0[1]*y
+#             return s
 
-        return build_s
+#         return build_s
 
     def _set_perturb_air(self,physics):
         n_ion = len(physics.c_ion)
@@ -925,17 +1060,23 @@ class PerturbPDE(PDE):
         self.alpha_x['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
         self.alpha_y['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
         self.a['is_in_water'] = [[0.0]*n_rep for i in range(n_rep)]
+#         func_c = functools.partial(build_c,physics)
+#         func_alpha = functools.partial(build_alpha,physics)
         
         for i in range(n_ion):
             self.c_x['is_in_water'][i][i] = physics.Diff_a[i]
             self.c_y['is_in_water'][i][i] = physics.Diff_a[i]
 
-            self.c_x['is_in_water'][i][-2] = PerturbPDE._build_c(physics,i)
-            self.c_y['is_in_water'][i][-2] = PerturbPDE._build_c(physics,i)
+            #self.c_x['is_in_water'][i][-2] = PerturbPDE._build_c(physics,i)
+            #self.c_y['is_in_water'][i][-2] = PerturbPDE._build_c(physics,i)
+            self.c_x['is_in_water'][i][-2] = 'func_c'
+            self.c_y['is_in_water'][i][-2] = 'func_c'
             
-            self.alpha_x['is_in_water'][i][i] = PerturbPDE._build_alpha(physics,i)
-            self.alpha_y['is_in_water'][i][i] = PerturbPDE._build_alpha(physics,i)
-            
+            #self.alpha_x['is_in_water'][i][i] = PerturbPDE._build_alpha(physics,i)
+            #self.alpha_y['is_in_water'][i][i] = PerturbPDE._build_alpha(physics,i)
+            self.alpha_x['is_in_water'][i][i] = 'func_alpha'
+            self.alpha_y['is_in_water'][i][i] = 'func_alpha'
+
             self.a['is_in_water'][i][i] = 1.0 #normalized frequency
             self.a['is_in_water'][-2][i] = -physics.z_ion[i]*Consts.f
 
@@ -996,7 +1137,8 @@ class PerturbPDE(PDE):
         n_rep = n_ion+2
         
         self.s_n['is_on_outer_bound'] = [0.0]*n_rep
-        self.s_n['is_on_outer_bound'][-2] = PerturbPDE._build_s(physics)
+        #self.s_n['is_on_outer_bound'][-2] = PerturbPDE._build_s(physics)
+        self.s_n['is_on_outer_bound'][-2] = 'func_s'
     
     def _set_perturb_unused_nodes(self,physics):
         #to disable a zone 1) set PDE coefficients 0; 2) impose 0 Dirichlet B.C.
@@ -1020,13 +1162,20 @@ class StaticPB(StaticPDE): #Poisson-Boltzmann equation
         attributes = ['c_x','c_y','a_n','f_n','s_n','g_s']
         for attr in attributes:
             self.__dict__[attr] = {}
-        
+
+        self.func_a = functools.partial(build_a,physics)
+        self.func_f = functools.partial(build_f,physics)
+
         self.c_x['is_in_water'] = [[physics.perm_a]]
         self.c_y['is_in_water'] = [[physics.perm_a]]
-        self.a_n['is_on_water'] = [[StaticPDE._build_a(physics)]]
-        self.f_n['is_on_water'] = [StaticPDE._build_f(physics)]
+        #self.a_n['is_on_water'] = [[StaticPDE._build_a(physics)]]
+        #self.f_n['is_on_water'] = [StaticPDE._build_f(physics)]
+        self.a_n['is_on_water'] = [['func_a']]
+        self.f_n['is_on_water'] = ['func_f']
         self.g_s['is_with_mixed_bound'] = [1.0*physics.sigma_solid]
         self.s_n['is_on_outside_water'] = [0.0]
+        self._set_dtype()
+        self._set_shape()
 
     def decompose(self): #to use build_a and build_f externally
         pb1 = PDE()
@@ -1041,6 +1190,12 @@ class StaticPB(StaticPDE): #Poisson-Boltzmann equation
         pb2.c_y = {'is_in_water':[[0.0]]}
         pb2.a_n = {'is_on_water':[[1.0]]} #should not matter if a or a_n
         pb2.f_n = {'is_on_water':[1.0]} #should not matter if f or f_n
+        
+        pb1._set_dtype()
+        pb1._set_shape()
+
+        pb2._set_dtype()
+        pb2._set_shape()
         
         return pb1,pb2
 
@@ -1077,6 +1232,12 @@ class PerturbPNP(PerturbPDE): #Poisson-Nernst-Planck equation
             pnp2.alpha_x['is_in_water'][i][i] = 1.0 #for sparsity
             pnp2.alpha_y['is_in_water'][i][i] = 1.0 #for sparsity
 
+        pnp1._set_dtype()
+        pnp1._set_shape()
+
+        pnp2._set_dtype()
+        pnp2._set_shape()
+
         return pnp1,pnp2
 
 class Physics(Consts):
@@ -1096,6 +1257,9 @@ class Physics(Consts):
         n_ion = len(self.c_ion)
         self.lambda_d = [0.0]*n_ion
         for i in range(n_ion):
+            if self.c_ion[i]==0:
+                self.lambda_d[i] = 0
+                continue
             dl = np.sqrt(self.perm_a*Consts.k*self.temperature/2
                          /self.Q_ion[i]/self.Q_ion[i]/self.C_ion[i]) #wrapped
             self.lambda_d[i] = dl

@@ -285,9 +285,10 @@ class Mesh():
         mesh._set_basis()
         mesh._set_mids()
         mesh._set_rot_factor()
+        mesh._set_edge_neigh()
 
         return mesh
-        
+
     def grad2d(self,f_n):
         print('Computing fields and gradients in elements')
         start = time.time()
@@ -310,6 +311,60 @@ class Mesh():
         print('')
 
         return f_out
+
+    def flux2d(self,f_x,f_y):
+        flux = np.zeros((len(self.edges),2),dtype=float)
+        for i in range(2): #possible two adjacent elements
+            nodes = self.nodes
+            mask = self.edge_to_elem[:,i]>=0
+            
+            #vector u points from edges[:,0] to edges[:,1]
+            edges = self.edges[mask,:]
+            u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0]
+            u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1]
+            u_len = np.sqrt(u_x**2+u_y**2)
+            u_x = u_x/u_len
+            u_y = u_y/u_len
+            
+            #vector v points from elem_mids to edges[:,0]
+            elements = self.elements[self.edge_to_elem[mask,i],:]
+            elem_mids = self.elem_mids[self.edge_to_elem[mask,i],:]
+            v_x = nodes[edges[:,0],0]-elem_mids[:,0]
+            v_y = nodes[edges[:,0],1]-elem_mids[:,1]
+            #v_len = np.sqrt(v_x**2+v_y**2)
+            #v_x = v_x/v_len
+            #v_y = v_y/v_len
+
+            #vector n = v-dot(u,v)u
+            n_x = v_x-(u_x*v_x+u_y*v_y)*u_x
+            n_y = v_y-(u_x*v_x+u_y*v_y)*u_y
+            n_len = np.sqrt(n_x**2+n_y**2)
+            n_x = n_x/n_len
+            n_y = n_y/n_len
+            #print(np.r_[n_x,n_y])
+
+            try:
+                flux[mask,i] = (f_x[self.edge_to_elem[mask,i]]*n_x
+                                +f_y[self.edge_to_elem[mask,i]]*n_y) #wrapped
+            except:
+                flux[mask,i] = f_x*n_x+f_y*n_y #for test purpose f_x=1,f_y=1
+
+        return flux
+
+    def to_spherical(self):
+        x = self.nodes[:,0]
+        y = self.nodes[:,1]
+        z = 0
+        rho = np.sqrt(x**2+y**2+z**2) #radial distance
+        #theta = np.arccos(z/rho) #polar angle
+        #phi = np.arctan2(y/x)
+        phi = np.zeros_like(rho)+np.pi/2 #azimuthal angle
+        mask = x>0
+        phi[mask] = np.arctan(y[mask]/x[mask])
+        mask = x<0
+        phi[mask] = np.arctan(y[mask]/x[mask])+np.pi
+        #return rho,theta,phi
+        return rho,phi
 
     def plot(self,f,cmap='viridis'): #plots of colored lines
         x = self.nodes[self.edges,0]
@@ -363,13 +418,18 @@ class Mesh():
         plt.show()
 
     def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],edgecolor='none',
-                  cmap='YlGnBu',logscale=False): #wrapped 
+                  cmap='YlGnBu_r',logscale=False,contour=False): #wrapped 
                                             #tripcolor plots of colored elements
         if len(f_in)==len(self.nodes):
-            f = self.grad2d(f_in)[:,0]
+            x_in = self.nodes[:,0]
+            y_in = self.nodes[:,1]
+            grads = self.grad2d(f_in)
+            f = grads[:,0]
         else:
+            x_in = self.elem_mids[:,0]
+            y_in = self.elem_mids[:,1]
             f = f_in
-        
+
         #!!!found bug when vmin and vmax are the same!!!
         if vmin==[]:
             vmin = min(f)
@@ -386,7 +446,7 @@ class Mesh():
                       'vmin':vmin,'vmax':vmax}
 
         x = self.nodes[:,0]
-        y = self.nodes[:,1]        
+        y = self.nodes[:,1]
         fig,ax=plt.subplots(figsize=(10,8))
         tpc=ax.tripcolor(x,y,self.elements,facecolors=f,**parser) #wrapped
         fig.colorbar(tpc,ax=ax,location='right')
@@ -399,6 +459,15 @@ class Mesh():
 
         if self.axis_symmetry=='Y':
             tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,**parser) #wrapped
+
+        if contour:
+            ax.tricontour(x_in,y_in,f_in,colors='white')
+            
+            if self.axis_symmetry=='X':
+                ax.tricontour(x_in,-y_in,f_in,colors='white')
+            
+            if self.axis_symmetry=='Y':
+                ax.tricontour(-x_in,y_in,f_in,colors='white')
 
         if len(xlim)==2:
             ax.set_xlim(xlim)
@@ -506,69 +575,69 @@ class Mesh():
 
         #compute advanced mesh indexing attributes (change to True)
         mask = self.is_in_air
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.elements[mask,:].ravel())
         self.is_on_air[ind_n] = True
         
         mask = self.is_in_water
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.elements[mask,:].ravel())
         self.is_on_water[ind_n] = True
 
         mask = self.is_in_solid
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.elements[mask,:].ravel())
         self.is_on_solid[ind_n] = True
         
         mask = self.is_inside_domain
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.elements[mask,:].ravel())
         self.is_on_inside_domain[ind_n] = True
 
         mask = self.is_with_stern
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_stern[ind_n] = True
         
         mask = self.is_with_equipotential
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_equipotential[ind_n] = True
         
         mask = self.is_with_axis_symmetry
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_axis_symmetry[ind_n] = True
         
         mask = self.is_with_top_bound
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_top_bound[ind_n] = True
 
         mask = self.is_with_bottom_bound
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_bottom_bound[ind_n] = True
         
         mask = self.is_with_left_bound
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_left_bound[ind_n] = True
 
         mask = self.is_with_right_bound
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_right_bound[ind_n] = True
 
         mask = self.is_with_top_bound
         mask = mask|self.is_with_bottom_bound
         mask = mask|self.is_with_left_bound
         mask = mask|self.is_with_right_bound
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_outer_bound[ind_n] = True
         
         #compute advanced mesh indexing attributes (change to False)
         mask = self.is_inside_domain
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.elements[mask,:].ravel())
         self.is_on_outside_domain[ind_n] = False
         
         mask = self.is_in_water
-        ind_n = np.unique(self.elements[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.elements[mask,:].ravel())
         self.is_on_outside_water[ind_n] = False
         
         mask = self.is_with_stern
-        ind_n = np.unique(self.edges[mask,:].flatten(order='C'))
+        ind_n = np.unique(self.edges[mask,:].ravel())
         self.is_on_outside_stern[ind_n] = False
-    
+
     def _set_basis(self):  
         n_elem = len(self.elements)
         n_edge = len(self.edges)
@@ -621,6 +690,72 @@ class Mesh():
             self.node_factor = 1.0
             self.elem_factor = 1.0
             self.edge_factor = 1.0
+
+    def _set_edge_neigh(self): #efficienty to be improved
+        print('Finding adjacent elements for line segments')
+        print('This will take a minute')
+        start = time.time()
+        n_elem = len(self.elements)
+        n_edge = len(self.edges)
+        self.edge_to_elem = np.zeros((n_edge,2),dtype=int)-1
+        self.elem_to_edge = [[]*1 for i in range(n_elem)]
+
+        for i in range(n_edge):
+            mask_1 = self.edges[i,0]==self.elements[:,0]
+            mask_1 = mask_1|(self.edges[i,0]==self.elements[:,1])
+            mask_1 = mask_1|(self.edges[i,0]==self.elements[:,2])
+            
+            mask_2 = self.edges[i,1]==self.elements[:,0]
+            mask_2 = mask_2|(self.edges[i,1]==self.elements[:,1])
+            mask_2 = mask_2|(self.edges[i,1]==self.elements[:,2])
+            
+            ind = np.where(mask_1&mask_2)[0]
+            if len(ind)==1:
+                self.edge_to_elem[i,0] = ind[0]
+                self.elem_to_edge[ind[0]].append(i)
+            elif len(ind)==2:
+                self.edge_to_elem[i,0] = ind[0]
+                self.edge_to_elem[i,1] = ind[1]
+                self.elem_to_edge[ind[0]].append(i)
+                self.elem_to_edge[ind[1]].append(i)
+            #else:
+            #    print(i,ind)
+        
+        self.elem_to_edge = np.array(self.elem_to_edge,dtype=int)
+        #sort of self.edge_to_elem by columns
+        #left column: flux2d positive if (f_x,f_y) is (1,1)
+        #right column: flux2d negative if (f_x,f_y) is (1,1)
+        elapsed = time.time()-start
+        print('Time elapsed ',elapsed,'sec')
+        print('')
+
+    def _set_elem_neigh(self):#slower than set_edge_neigh
+        print('Finding edges for triangular elements')
+        print('This will take a minute')
+        start = time.time()
+        n_elem = len(self.elements)
+        n_edge = len(self.edges)
+        self.elem_to_edge = np.zeros((n_elem,3),dtype=int)
+        self.edge_to_elem = [[]*1 for i in range(n_edge)]
+
+        for i in range(n_elem):
+            ind_a = [0,1,2]
+            ind_b = [1,2,0]
+            for j in range(3):
+                mask_1 = self.elements[i,ind_a[j]]==self.edges[:,0]
+                mask_1 = mask_1|(self.elements[i,ind_a[j]]==self.edges[:,1])
+
+                mask_2 = self.elements[i,ind_b[j]]==self.edges[:,0]
+                mask_2 = mask_2|(self.elements[i,ind_b[j]]==self.edges[:,1])
+
+                ind = np.where(mask_1&mask_2)[0]
+                self.elem_to_edge[i,j] = ind[0]
+                self.edge_to_elem[ind[0]].append(i)
+
+        elapsed = time.time()-start
+        print('Time elapsed ',elapsed,'sec')
+        print('')
+
 
 class Complex():
     def __init__(self,**kwargs): #avoid long list of inputs
