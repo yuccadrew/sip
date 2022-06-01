@@ -285,7 +285,7 @@ class Mesh():
         mesh._set_basis()
         mesh._set_mids()
         mesh._set_rot_factor()
-        mesh._set_edge_neigh()
+        #mesh._set_edge_neigh()
 
         return mesh
 
@@ -351,10 +351,15 @@ class Mesh():
 
         return flux
 
-    def to_spherical(self):
-        x = self.nodes[:,0]
-        y = self.nodes[:,1]
-        z = 0
+    def to_spherical(self,is_nodal=True):
+        if is_nodal:
+            x = self.nodes[:,0]
+            y = self.nodes[:,1]
+            z = 0
+        else:
+            x = self.elem_mids[:,0]
+            y = self.elem_mids[:,1]
+            z = 0
         rho = np.sqrt(x**2+y**2+z**2) #radial distance
         #theta = np.arccos(z/rho) #polar angle
         #phi = np.arctan2(y/x)
@@ -417,9 +422,9 @@ class Mesh():
 
         plt.show()
 
-    def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],edgecolor='none',
-                  cmap='YlGnBu_r',logscale=False,contour=False): #wrapped 
-                                            #tripcolor plots of colored elements
+    def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],title=[],
+                  edgecolor='none',cmap='YlGnBu_r',logscale=False,
+                  contour=False): #wrapped #tripcolor plots of colored elements
         if len(f_in)==len(self.nodes):
             x_in = self.nodes[:,0]
             y_in = self.nodes[:,1]
@@ -455,10 +460,10 @@ class Mesh():
         ax.set_ylabel('Y (m)')
         
         if self.axis_symmetry=='X':
-            tpc=ax.tripcolor(x,-y,self.elements,facecolors=f,**parser) #wrapped
+            tpc=ax.tripcolor(x,-y,self.elements,facecolors=f,**parser)
 
         if self.axis_symmetry=='Y':
-            tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,**parser) #wrapped
+            tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,**parser)
 
         if contour:
             ax.tricontour(x_in,y_in,f_in,colors='white')
@@ -475,6 +480,8 @@ class Mesh():
         if len(ylim)==2:
             ax.set_ylim(ylim)
 
+        if len(title)>0:
+            ax.set_title(title)
         plt.show()
     
     def visualize(self,elem_flags=[],edge_flags=[],xlim=[],ylim=[]):

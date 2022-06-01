@@ -566,6 +566,154 @@ class FEM():
         self.dirichlet = dirichlet
         self.sol = np.reshape(solve_system(K,b),(len(mesh.nodes),-1))
 
+    def validate(self,ansol_in,interp=False,mask_in=[],xlim=[],ylim=[],
+                 is_static=True):
+        n_elem = len(self.mesh.elements)
+        n_node = len(self.mesh.nodes)
+        n_rep = len(self.pde.c_x[list(self.pde.c_x.keys())[0]])
+        if interp:
+            x = self.mesh.elem_mids[:,0]
+            y = self.mesh.elem_mids[:,1]
+            rho,phi = self.mesh.to_spherical(is_nodal=False)
+            sol = np.zeros((n_elem,n_rep))
+            mask_sol = np.zeros((n_elem,n_rep),dtype=bool)
+            for i in range(n_rep):
+                sol[:,i] = self.mesh.grad2d(self.sol[:,i])[:,0]
+                if i<=(n_rep-3):
+                    mask_sol[:,i] = self.mesh.is_in_water
+                elif i==(n_rep-1):
+                    mask_sol[:,i] = self.mesh.is_in_water #to be updated
+                else:
+                    mask_sol[:,i] = self.mesh.is_inside_domain
+                
+                if n_rep==1:
+                    mask_sol[:,i] = self.mesh.is_inside_domain
+        else:
+            x = self.mesh.nodes[:,0]
+            y = self.mesh.nodes[:,1]
+            rho,phi = self.mesh.to_spherical(is_nodal=True)
+            phi = phi*180/np.pi
+            sol = self.sol
+            mask_sol = np.zeros((n_node,n_rep),dtype=bool)
+            for i in range(n_rep):
+                if i<=(n_rep-3):
+                    mask_sol[:,i] = self.mesh.is_on_water
+                elif i==(n_rep-1):
+                    mask_sol[:,i] = self.mesh.is_on_stern
+                else:
+                    mask_sol[:,i] = self.mesh.is_on_air|self.mesh.is_on_water
+                    mask_sol[:,i] = mask_sol[:,i]|self.mesh.is_on_solid
+
+                if n_rep==1:
+                    mask_sol[:,i] = self.mesh.is_on_air|self.mesh.is_on_water
+                    mask_sol[:,i] = mask_sol[:,i]|self.mesh.is_on_solid
+
+        if callable(ansol_in):
+            ansol = ansol_in(x=x,y=y)
+        else:
+            ansol = ansol_in
+
+        if len(mask_in)==0:
+            mask_in = np.ones_like(x,dtype=bool)
+
+        if n_rep==1:
+            pot = sol[:,0]
+            anpot = ansol[:,0]
+        else:
+            pot = sol[:,-2]
+            anpot = ansol[:,-2]
+
+        if n_rep==1:
+            titles = ['$U_a$']
+            units = [' (V)']
+        elif n_rep==4:
+            titles = ['$C_-}$','$C_+}$','$U_a$','$\Sigma_s$']
+            units = [' $(mol/m^3)$',' $(mol/m^3)$',' $(V)$',' $(C/m^2)$']
+        else:
+            titles = [None]*n_rep
+            units = [None]*n_rep
+            for i in range(n_rep-2):
+                titles[i] = '$C_'+str(i+1)+'$'
+                units[i] = ' $(mol/m^3)$'
+            titles[-2] = '$U_a$'
+            titles[-1] = '$\Sigma_s$'
+            units[-2] = ' $(V)$'
+            units[-1] = ' $(C/m^2)$'
+
+        if is_static:
+            for i in range(n_rep):
+                titles[i] = titles[i]+'$^{(0)}$'
+        else:
+            for i in range(n_rep):
+                titles[i] = '$\delta$ '+titles[i]
+
+        if n_rep>1:
+            #titles[-1] = '$-\Sigma_d^{(0)}$'
+            titles[-1] = '$\Sigma-\Sigma_s^{(0)}$'
+
+        if np.any(np.iscomplex(anpot)):
+            self.mesh.tripcolor(np.real(anpot),title='Real($U_{an}$)')
+            self.mesh.tripcolor(np.imag(anpot),title='Imag($U_{an}$)')
+        else:
+            self.mesh.tripcolor(np.real(anpot),title='Real($U_{an}$)')
+
+        dist = np.sqrt(x**2+y**2)
+        if n_rep==1:
+            fig,ax = plt.subplots(n_rep,2,figsize=(12,4*n_rep))
+        else:
+            fig,ax = plt.subplots(n_rep+1,2,figsize=(12,4*(n_rep+1)))
+        axes = ax.flatten()
+        for i in range(n_rep):
+            mask = mask_sol[:,i]&mask_in
+            axes[2*i].plot(dist[mask],np.real(sol[mask,i]),'.')
+            axes[2*i].plot(dist[mask],np.real(ansol[mask,i]),'.',alpha=0.5)
+            axes[2*i].plot(dist[mask],np.abs(np.real(ansol[mask,i]
+                                                     -sol[mask,i])),
+                           '.',alpha=0.5) #wrapped
+            axes[2*i+1].plot(dist[mask],np.imag(sol[mask,i]),'.')
+            axes[2*i+1].plot(dist[mask],np.imag(ansol[mask,i]),'.',alpha=0.5)
+            axes[2*i+1].plot(dist[mask],np.imag(np.real(ansol[mask,i]
+                                                        -sol[mask,i])),
+                             '.',alpha=0.5) #wrapped
+            axes[2*i+1].legend(['numerical','analytical','abs(diff)'],
+                               loc='upper right',bbox_to_anchor=(1.75,1.00)) #wrapped
+            axes[2*i].set_title('Real')
+            axes[2*i+1].set_title('Imag')
+            axes[2*i].set_xlabel('Distance (m)')
+            axes[2*i+1].set_xlabel('Distance (m)')
+            axes[2*i].set_ylabel(titles[i]+units[i])
+            axes[2*i+1].set_ylabel(titles[i]+units[i])
+            if (i<=(n_rep-2))&(len(xlim)>0):
+                axes[2*i].set_xlim(xlim)
+                axes[2*i+1].set_xlim(xlim)
+
+        for i in range(n_rep-1,n_rep):
+            if n_rep==1:
+                break
+            mask = mask_sol[:,i]&mask_in
+            axes[2*i+2].plot(phi[mask],np.real(sol[mask,i]),'.')
+            axes[2*i+2].plot(phi[mask],np.real(ansol[mask,i]),'.',alpha=0.5)
+            axes[2*i+2].plot(phi[mask],np.abs(np.real(ansol[mask,i]
+                                                     -sol[mask,i])),
+                             '.',alpha=0.5) #wrapped
+            axes[2*i+3].plot(phi[mask],np.imag(sol[mask,i]),'.')
+            axes[2*i+3].plot(phi[mask],np.imag(ansol[mask,i]),'.',alpha=0.5)
+            axes[2*i+3].plot(phi[mask],np.imag(np.real(ansol[mask,i]
+                                                        -sol[mask,i])),
+                             '.',alpha=0.5) #wrapped
+            axes[2*i+3].legend(['numerical','analytical','abs(diff)'],
+                               loc='upper right',bbox_to_anchor=(1.75,1.00)) #wrapped
+            axes[2*i+2].set_title('Real')
+            axes[2*i+3].set_title('Imag')
+            axes[2*i+2].set_xlabel('$\phi$ (deg)')
+            axes[2*i+3].set_xlabel('$\phi$ (deg)')
+            axes[2*i+2].set_ylabel(titles[i]+units[i])
+            axes[2*i+3].set_ylabel(titles[i]+units[i])
+
+        plt.tight_layout()
+        plt.show()
+        return fig,ax
+
     def visualize(self,xlim=[],ylim=[]):
         #only works for n_rep equal 4 now
         n_rep = len(self.pde.c_x[list(self.pde.c_x.keys())[0]])
@@ -700,78 +848,6 @@ class StaticFEM(FEM):
 
         self.ratio = ratio
         self.sol = sol
-
-#     def solve_1(self,ratio,sigma_init=0.002e-2,max_iter=20):
-#         n_node = len(self.mesh.nodes)
-#         n_rep = len(self.pde.c_x[list(self.pde.c_x.keys())[0]])
-
-#         sigma_solid = self.pde.g_s['is_with_mixed_bound'][0]
-#         self.ratio = ratio
-#         self.sol = [[None]*max_iter for i in range(len(ratio))]
-
-#         x_n = self.mesh.nodes[self.mesh.is_on_water,0]
-#         y_n = self.mesh.nodes[self.mesh.is_on_water,1]
-
-#         for i in range(len(ratio)):
-#             sigma_diffuse = -sigma_solid*(1-ratio[i])
-#             sigma_n = np.min([np.abs(sigma_init),np.abs(sigma_diffuse)])
-#             sigma_n *= np.sign(sigma_solid)
-#             print('sigma_init',sigma_init,'sigma_solid',sigma_solid)
-
-#             u_1 = np.zeros(n_node,dtype=float)[self.mesh.is_on_water]
-#             u_n = np.zeros(n_node,dtype=float)[self.mesh.is_on_water]
-#             for j in range(max_iter):
-#                 print('='*20+' ITERATION #',j+1,' '+'='*20)
-#                 #print('sigma_n',sigma_n,'-sigma_diffuse',-sigma_diffuse)
-#                 print('Current sigma is:',sigma_n)
-#                 print('Target sigma is:',-sigma_diffuse)
-#                 print('')
-
-#                 #a_n = self.pde.a_n['is_on_water'][0][0](x_n,y_n,u_n)
-#                 #f_n = self.pde.f_n['is_on_water'][0](x_n,y_n,u_n)
-#                 a_n = self.pde.func_a(x_n,y_n,u_n)
-#                 f_n = self.pde.func_f(x_n,y_n,u_n)
-
-#                 diag_a = np.zeros((n_node,n_rep),dtype=float)
-#                 diag_f = np.zeros((n_node,n_rep),dtype=float)
-
-#                 diag_a[self.mesh.is_on_water,0] = a_n
-#                 diag_f[self.mesh.is_on_water,0] = f_n
-
-#                 diag_a = sparse.diags(diag_a.ravel())
-#                 diag_f = sparse.diags(diag_f.ravel())
-
-#                 K = (self.domain[0].K1+self.domain[0].K2
-#                      +diag_a.dot(self.domain[1].K2)
-#                      +self.stern.K1+self.stern.K2
-#                      +self.robin.K1+self.robin.K2) #wrapped
-#                 b = (self.domain[0].b1+self.domain[0].b2
-#                      +diag_f.dot(self.domain[1].b2)
-#                      +self.stern.b1+self.stern.b2
-#                      +self.robin.b1*(sigma_n/sigma_solid)+self.robin.b2) #wrapped
-#                 K,b = set_first_kind_bc(self.dirichlet,K,b,verb=0)
-#                 self.sol[i][j] = np.reshape(solve_system(K,b,verb=0),(n_node,-1))
-
-#                 #update u_n and sigma_n
-#                 u_1[:] = u_n
-#                 u_n = self.sol[i][j][self.mesh.is_on_water,0]
-#                 sigma_1 = sigma_n
-#                 sigma_n = sigma_n*5
-#                 sigma_n = np.min([np.abs(sigma_n),np.abs(sigma_diffuse)])
-#                 sigma_n *= np.sign(sigma_solid)
-
-#                 #check convergence
-#                 if np.linalg.norm(u_n)>0:
-#                     rel_error=np.linalg.norm(u_n-u_1)/np.linalg.norm(u_n)
-#                 else:
-#                     rel_error=0.0
-#                 print('Relative error is',rel_error)
-#                 if (sigma_1==-sigma_diffuse)&(rel_error<0.05):
-#                     print('Solution is converged')
-#                     print('')
-#                     del self.sol[i][j+1:]
-#                     break
-#                 print('')
 
 
 class PerturbFEM(FEM):

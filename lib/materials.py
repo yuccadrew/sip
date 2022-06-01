@@ -11,7 +11,7 @@ class Consts():
 
 Consts.e = constants.e #elementary charge
 Consts.p = constants.epsilon_0 #vacuum permittivity
-Consts.a = constants.N_A #Avogadro constant
+Consts.n = constants.N_A #Avogadro constant
 Consts.k = constants.k #Boltzmann constant
 Consts.f = constants.value('Faraday constant') #Faraday constant
 
@@ -24,27 +24,27 @@ flatten_list = lambda irregular_list:[element for item in irregular_list \
 
 def build_a(physics,x,y,u,*args,**kwargs): #generalized PB equation
     n_ion = len(physics.c_ion)
-    a = np.zeros_like(np.array(u))
+    a = np.zeros_like(np.array(u)).astype(float)
     for i in range(n_ion):
-        k = -physics.Q_ion[i]/Consts.k/physics.temperature
-        a += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
+        k = -physics.z_ion[i]*Consts.e/Consts.k/physics.temperature
+        a += physics.z_ion[i]*physics.c_ion[i]*np.exp(k*u)*(-k)
 
-    return a
+    return a*Consts.f
 
 
 def build_f(physics,x,y,u,*args,**kwargs): #generalized PB equation
     n_ion = len(physics.c_ion)
-    f = np.zeros_like(np.array(u))
+    f = np.zeros_like(np.array(u)).astype(float)
     for i in range(n_ion):
-        k = -physics.Q_ion[i]/Consts.k/physics.temperature
-        f += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
+        k = -physics.z_ion[i]*Consts.e/Consts.k/physics.temperature
+        f += physics.z_ion[i]*physics.c_ion[i]*np.exp(k*u)*(1-k*u)
 
-    return f
+    return f*Consts.f
 
 
 def build_c(physics,x,y,pot,i):
-    v = np.exp(-physics.Q_ion[i]*pot/Consts.k/physics.temperature)
-    c = physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i]*v #c or C_ion
+    c = np.exp(-physics.z_ion[i]*Consts.e*pot/Consts.k/physics.temperature)
+    c *= physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i] #c or C_ion
     return c
 
 
@@ -864,12 +864,12 @@ class StaticPDE(PDE):
 #             n_ion = len(physics.c_ion)
 #             a = np.zeros_like(x)
 #             for i in range(n_ion):
-#                 k = -physics.Q_ion[i]/Consts.k/physics.temperature
-#                 a += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
+#                 k = -physics.q_ion[i]/Consts.k/physics.temperature
+#                 a += physics.q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
 
 # #             i = 1
-# #             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-# #             a1 = (2.0*physics.Q_ion[i]**2*physics.C_ion[i]/Consts.k
+# #             v = physics.q_ion[i]*u/Consts.k/physics.temperature
+# #             a1 = (2.0*physics.q_ion[i]**2*physics.C_ion[i]/Consts.k
 # #                   /physics.temperature*np.cosh(v)) #wrapped
 
 # #             print('a')
@@ -886,12 +886,12 @@ class StaticPDE(PDE):
 #             n_ion = len(physics.c_ion)
 #             f = np.zeros_like(x)
 #             for i in range(n_ion):
-#                 k = -physics.Q_ion[i]/Consts.k/physics.temperature
-#                 f += physics.Q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
+#                 k = -physics.q_ion[i]/Consts.k/physics.temperature
+#                 f += physics.q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
 
 # #             i = 1
-# #             v = physics.Q_ion[i]*u/Consts.k/physics.temperature
-# #             f1 = (-2.0*physics.Q_ion[i]*physics.C_ion[i]
+# #             v = physics.q_ion[i]*u/Consts.k/physics.temperature
+# #             f1 = (-2.0*physics.q_ion[i]*physics.C_ion[i]
 # #                   *(np.sinh(v)-np.cosh(v))*v) #wrapped
 
 # #             print('f')
@@ -1017,7 +1017,7 @@ class PerturbPDE(PDE):
 #     def _build_c(physics,i):
 #         #global build_c
 #         def build_c(x,y,pot):
-#             v = np.exp(-physics.Q_ion[i]*pot/Consts.k/physics.temperature)
+#             v = np.exp(-physics.q_ion[i]*pot/Consts.k/physics.temperature)
 #             c = physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i]*v #c or C_ion
 #             return c
 
@@ -1064,8 +1064,8 @@ class PerturbPDE(PDE):
 #         func_alpha = functools.partial(build_alpha,physics)
         
         for i in range(n_ion):
-            self.c_x['is_in_water'][i][i] = physics.Diff_a[i]
-            self.c_y['is_in_water'][i][i] = physics.Diff_a[i]
+            self.c_x['is_in_water'][i][i] = physics.Dm_a[i]
+            self.c_y['is_in_water'][i][i] = physics.Dm_a[i]
 
             #self.c_x['is_in_water'][i][-2] = PerturbPDE._build_c(physics,i)
             #self.c_y['is_in_water'][i][-2] = PerturbPDE._build_c(physics,i)
@@ -1104,8 +1104,8 @@ class PerturbPDE(PDE):
         self.c_x['is_with_stern'][-1][-2] = -physics.mu_s*physics.sigma_solid #normalized sigma_stern
         self.c_y['is_with_stern'][-1][-2] = -physics.mu_s*physics.sigma_solid #normalized sigma_stern
         
-        self.c_x['is_with_stern'][-1][-1] = physics.Diff_s
-        self.c_y['is_with_stern'][-1][-1] = physics.Diff_s
+        self.c_x['is_with_stern'][-1][-1] = physics.Dm_s
+        self.c_y['is_with_stern'][-1][-1] = physics.Dm_s
         
         self.a['is_with_stern'][-1][-1] = 1.0 #normalized frequency
     
@@ -1159,7 +1159,7 @@ class PerturbPDE(PDE):
 
 class StaticPB(StaticPDE): #Poisson-Boltzmann equation
     def __init__(self,physics): #avoid long list of inputs
-        attributes = ['c_x','c_y','a_n','f_n','s_n','g_s']
+        attributes = ['c_x','c_y','a','f','a_n','f_n','s_n','g_s']
         for attr in attributes:
             self.__dict__[attr] = {}
 
@@ -1168,10 +1168,12 @@ class StaticPB(StaticPDE): #Poisson-Boltzmann equation
 
         self.c_x['is_in_water'] = [[physics.perm_a]]
         self.c_y['is_in_water'] = [[physics.perm_a]]
+        self.a['is_on_water'] = [['func_a']] #can be either a or a_n 
+        self.f['is_on_water'] = ['func_f'] #can be either f or f_n
         #self.a_n['is_on_water'] = [[StaticPDE._build_a(physics)]]
         #self.f_n['is_on_water'] = [StaticPDE._build_f(physics)]
-        self.a_n['is_on_water'] = [['func_a']]
-        self.f_n['is_on_water'] = ['func_f']
+        #self.a_n['is_on_water'] = [['func_a']]
+        #self.f_n['is_on_water'] = ['func_f']
         self.g_s['is_with_mixed_bound'] = [1.0*physics.sigma_solid]
         self.s_n['is_on_outside_water'] = [0.0]
         self._set_dtype()
@@ -1245,38 +1247,157 @@ class Physics(Consts):
         for key,value in kwargs.items():
             setattr(self,key,value)
 
-        self.C_ion = [val*Consts.a for val in self.c_ion]
-        self.Q_ion = [val*Consts.e for val in self.z_ion]
-        self.Diff_a = [val*Consts.k*self.temperature/Consts.e
+        #self.C_ion = [val*Consts.n for val in self.c_ion]
+        #self.Q_ion = [val*Consts.e for val in self.z_ion]
+        self.Dm_a = [val*Consts.k*self.temperature/Consts.e
                        for val in self.mu_a] #wrapped
-        self.Diff_s = self.mu_s*Consts.k*self.temperature/Consts.e
+        self.Dm_s = self.mu_s*Consts.k*self.temperature/Consts.e
         self.perm_a = self.rel_perm_a*Consts.p
         self.perm_i = self.rel_perm_i*Consts.p
 
         #compute Debyle length for each ion species
-        n_ion = len(self.c_ion)
-        self.lambda_d = [0.0]*n_ion
-        for i in range(n_ion):
-            if self.c_ion[i]==0:
-                self.lambda_d[i] = 0
-                continue
-            dl = np.sqrt(self.perm_a*Consts.k*self.temperature/2
-                         /self.Q_ion[i]/self.Q_ion[i]/self.C_ion[i]) #wrapped
-            self.lambda_d[i] = dl
-
+        #compute thermal energy for each ion species
         #suggest initial surface charge density for solving PB equation
         #sigma_init is dominated by Debye length
-        #if Debye length << sphere radius; vice versa
+        #if Debye length << sphere radius; vice versa        
+        n_ion = len(self.c_ion)
+        self.lambda_d = [0.0]*n_ion #Debye length
+        self.Q = [0.0]*n_ion #thermal energy
         unsigned_sigma_init = [0.0]*n_ion
         for i in range(n_ion):
-            zeta = 0.01*Consts.k*self.temperature/abs(self.Q_ion[i])
-            if self.radius_a>0:
-                dl = 1/(1/self.lambda_d[i]+1/self.radius_a)
+            self.Q[i] = Consts.k*self.temperature/abs(self.z_ion[i]*Consts.e)
+            if self.c_ion[i]>0:
+                self.lambda_d[i] = np.sqrt(self.perm_a*Consts.k*self.temperature
+                                    /2/(self.z_ion[i]*Consts.e)**2/self.c_ion[i]
+                                    /Consts.n) #wrapped
             else:
-                dl = self.lambda_d[i]
+                self.lambda_d[i] = 0.0
 
-            unsigned_sigma_init[i] = zeta*dl/self.perm_a
+            if self.radius_a>0:
+                kappa = 1/self.lambda_d[i]+1/self.radius_a
+            else:
+                kappa = 1/self.lambda_d[i]
+
+            unsigned_sigma_init[i] = 0.01*self.Q[i]*self.perm_a*kappa
+
         self.sigma_init = min(unsigned_sigma_init)*np.sign(self.sigma_solid)
+#         for i in range(n_ion):
+#             zeta = 0.01*Consts.k*self.temperature/abs(self.q_ion[i])
+#             if self.radius_a>0:
+#                 dl = 1/(1/self.lambda_d[i]+1/self.radius_a)
+#             else:
+#                 dl = self.lambda_d[i]
+#             unsigned_sigma_init[i] = zeta*dl/self.perm_a
+
+    @staticmethod
+    def compute_k1(k,r):
+        #modified spherical Bessel function of the second kind
+        k1 = np.pi/2*np.exp(-k*r)*(1/(k*r)+1/(k*r)**2)
+        return k1
+
+    @staticmethod
+    def grad_k1(k,r):
+        #partial derivative of the modified spherical Bessel
+        #function of the second kind evaluated at r=a
+        k1 = Physics.compute_k1(k,r)
+        dk1dr = -k*k1-np.pi/2*np.exp(-k*r)/r*(1/(k*r)+2/(k*r)**2)
+        return dk1dr
+
+    def compute_anpot(self,zeta,is_sigma,x,y,z):
+        radius_a = self.radius_a
+        lambda_d = self.lambda_d[0]
+
+        #if radius_a is 0 return ansol_slab else return ansol_sphere
+        if lambda_d==0:
+            pass
+        elif radius_a==0:
+            pass
+        else:
+            if is_sigma:
+                zeta = zeta/(1/lambda_d+1/radius_a)/self.perm_a
+            dist = np.sqrt(x**2+y**2+z**2)
+            pot = np.zeros((len(dist),4),dtype=float)
+            mask = dist>radius_a
+            pot[mask,0] = (zeta*radius_a*np.exp((radius_a-dist[mask])/lambda_d)
+                           /dist[mask]) #wrapped
+            pot[mask,1] = (-pot[mask,0]*(1/lambda_d+1/dist[mask])*x[mask]
+                           /dist[mask]) #wrapped
+            pot[mask,2] = (-pot[mask,0]*(1/lambda_d+1/dist[mask])*y[mask]
+                           /dist[mask]) #wrapped
+            pot[mask,3] = (-pot[mask,0]*(1/lambda_d+1/dist[mask])*z[mask]
+                           /dist[mask]) #wrapped
+            pot[~mask,0] = zeta
+
+        print('SOLID PARTICLE RADIUS IS:',self.radius_a,'[m]')
+        print('RELATIVE PERMITTIVITY OF ELECTROLYTE IS:',self.rel_perm_a,'[SI]')
+        print('TEMPERATURE IS:',self.temperature,' [K]')
+        print('ION COCENTRATION[0] AT INFINITY IS:',self.c_ion[0],'[mol/m^3]')
+        print('ION VALENCE[0] IS:',self.z_ion[0])
+        print('DEBYE LENGTH[0] IS:',self.lambda_d[0],'[m]')
+        print('THERMAL ENERGY[0] IS:',self.Q[0],'[J]')
+        print('POTENTIAL AT SOLID-LIQUID INTERFACE IS:',zeta, '[V]')
+        print('')
+        return pot
+
+    def compute_anpnp(self,ratio,freq,x,y,alpha=0,beta=0,*args):
+        n_ion = len(self.c_ion)
+        if self.is_solid_metal and n_ion==2:
+            dist = np.sqrt(x**2+y**2)
+            conc = np.zeros((len(dist),n_ion),dtype=complex)
+            pot = np.zeros(len(dist),dtype=complex)
+            sigma = np.zeros(len(dist),dtype=complex)
+
+            e_0 = np.sqrt(self.e_0[0]**2+self.e_0[1]**2)
+            radius_a = self.radius_a
+            perm_a = self.perm_a
+            c_ion = np.r_[self.c_ion,0.0]
+            mobility = self.mu_a[0]
+            diffusion = self.Dm_a[0]
+            lambda_d = self.lambda_d[0]
+            lambda_1=np.sqrt(1j*freq*(2*np.pi)/diffusion+1/lambda_d**2)
+            lambda_2=np.sqrt(1j*freq*(2*np.pi)/diffusion)
+
+            a_1 = lambda_1*radius_a
+            a_2 = lambda_2*radius_a
+            f_2 = (a_1**2+2*a_1+2)/(a_1+1)
+            f_3 = (a_2+1)/(a_2**2+2*a_2+2)
+            f_1 = f_2*1j*freq*(2*np.pi)/diffusion*lambda_d**2
+
+            numerator = 3*(1+beta*radius_a/diffusion*f_3) \
+                +3*c_ion[2]/(c_ion[2]-2*c_ion[0])*(alpha/mobility-1) #wrapped
+            denominator = c_ion[2]/(c_ion[2]-2*c_ion[0]) \
+                *(f_1+alpha/mobility*(f_2-2)
+                  +beta*radius_a*lambda_1**2/diffusion*lambda_d**2+2) \
+                -(2+f_1)*(1+beta*radius_a/diffusion*f_3) #wrapped
+
+            k_e = e_0*(1+numerator/denominator)
+            f_e = f_2+(e_0+2*k_e)/(e_0-k_e)
+            k_a = -(e_0*radius_a-k_e*radius_a)*lambda_1**2*perm_a \
+                /2/Consts.f/Physics.compute_k1(lambda_1,radius_a) #wrapped
+            k_b = (e_0-k_e)/Physics.grad_k1(lambda_2,radius_a) \
+                *(lambda_1**2*perm_a/2/Consts.f*f_2
+                  -mobility/diffusion*c_ion[0]*f_e) #wrapped
+            k_m = -c_ion[2]/c_ion[0]*(e_0-k_e)\
+                /Physics.grad_k1(lambda_2,radius_a) \
+                /(1+beta*radius_a/diffusion*f_3) \
+                *(lambda_1**2*perm_a/2/Consts.f*(f_2+beta*radius_a/diffusion)
+                  -c_ion[0]/diffusion*(mobility-alpha)*f_e) #wrapped
+
+            mask = dist>=radius_a
+            rho = dist[mask]
+            cosb = x[mask]/dist[mask]
+            k1_1 = Physics.compute_k1(lambda_1,rho)
+            k1_2 = Physics.compute_k1(lambda_2,rho)
+            conc[mask,0] = -(k_a*k1_1+k_b*k1_2)*cosb
+            conc[mask,1] = (c_ion[1]/c_ion[0]*k_a*k1_1+(k_b-k_m)*k1_2)*cosb
+            #conc[mask,2] = (c_ion[2]/c_ion[0]*k_a*k1_1+k_m*k1_2)*cosb
+            pot[mask] = (-2*Consts.f/lambda_1**2/perm_a*k_a*k1_1-e_0*rho
+                         +k_e*radius_a**3/rho**2)*cosb #wrapped
+        else:
+            pass
+
+        ansol = np.c_[conc,pot,sigma]
+        return ansol
 
 
 class Survey():
