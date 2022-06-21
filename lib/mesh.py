@@ -22,7 +22,10 @@ Flags.bottom_bound = 12
 Flags.left_bound = 13
 Flags.right_bound = 14
 
+#def build_polyfile(cpts,segs,holes,zones,mesh_prefix,dist_factor):
 def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
+    print('Writing '+mesh_prefix+'.poly')
+    print('')
     #build the poly file
     f1 = open(mesh_prefix+'.poly','w')
     s1 = str(len(cpts))
@@ -249,13 +252,79 @@ def build_basis1d(nodes,edges):
     return basis,length
 
 
-class Mesh():
-    def __init__(self,**kwargs): #avoid long list of inputs
-        for key,value in kwargs.items():
-            setattr(self,key,value)
+def discretize_rho(lambda_d,rho_min,rho_max):
+    #obtain fine grid next to the solid-liquid interface
+    #use 16 points between 0.02*debye_length and 10*debye_length
+    #reduce debye_length if water film is too thin
+    #lambda_d = min(9e-9,height_water)
+    #print('DEBYE LENGTH IS: %.2e nm'%(lambda_d*1e9))
+
+    rho = np.logspace(np.log10(0.02),1,16)*lambda_d
+    dr = np.diff(np.log10(rho/lambda_d))[0]
+    #print('min(np.diff(rho) %.2e nm'%(min(np.diff(rho))*1e9))
+    #print('height_water %.2e nm'%height_water)
+    #print('')
     
+    #use the logarithmic interval above to discretize the entire space
+    #which extends to radius_solid for this slab example
+    rho = np.power(10,np.arange(np.log10(0.02)-dr,1,dr))*lambda_d
+    cnt = 0
+    while rho[-1]<(rho_max-rho_min):
+        cnt = cnt+1
+        rho = np.power(10,np.arange(np.log10(0.02)-dr,1+dr*cnt,dr))*lambda_d
+
+    #adjust the starting and ending points in the discretization
+    rho = np.r_[rho_min,rho[:-2]+rho_min,rho_max]
+    #no need to refine diffuse layer if there is no diffuse layer
+    #rho = np.r_[rho_min,rho_max]
+    return rho
+
+
+class Mesh():
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            pass
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+            self.dist_factor = 1.0
+            self.nodes,self.node_flags = import_nodes(self.prefix)
+            self.elements,self.elem_flags = import_elements(self.prefix)
+            self.edges,self.edge_flags = import_edges(self.prefix)
+            self.nodes = self.nodes*self.unscale_factor #will be removed!!!
+            print('THE NUMBER OF NODES IS: %d'%len(self.nodes))
+            print('THE NUMBER OF ELEMENTS IS: %d'%len(self.elements))
+            print('THE NUMBER OF EDGES IS: %d'%len(self.edges))
+            print('node_flags',np.unique(self.node_flags))
+            print('elem_flags',np.unique(self.elem_flags))
+            print('edge_flags',np.unique(self.edge_flags))
+            print('')
+            self._set_inds()
+            self._set_basis()
+            self._set_mids()
+            self._set_rot_factor()
+            #self._set_edge_neigh()
+
+    def save(self,hf_group):
+        for attr in self.__dict__.keys():
+            if type(self.__dict__[attr]) is str:
+                hf_group.create_dataset(attr,data=self.__dict__[attr]) #placeholder
+            else:
+                hf_group.create_dataset(attr,data=self.__dict__[attr])
+
     @classmethod
-    def builder(cls,**kwargs): #avoid long list of inputs
+    def load(cls,hf_group):
+        mesh = cls()
+        for attr in hf_group.keys():
+            setattr(mesh,attr,np.array(hf_group[attr]))
+            if mesh.__dict__[attr].dtype=='object':
+                mesh.__dict__[attr] = str(mesh.__dict__[attr].astype(str))
+
+        return mesh
+
+    @classmethod
+    def builder(cls,*args,**kwargs): #avoid long list of inputs
         mesh = cls(**kwargs)
         mesh.dist_factor = 1.0
         build_polyfile(mesh.prefix,mesh.cpts,mesh.segs,mesh.holes,mesh.zones,
@@ -269,11 +338,11 @@ class Mesh():
         mesh._set_basis()
         mesh._set_mids()
         mesh._set_rot_factor()
-        
+
         return mesh
-    
+
     @classmethod
-    def importer(cls,**kwargs): #avoid long list of inputs
+    def importer(cls,*args,**kwargs): #avoid long list of inputs
         mesh = cls(**kwargs)
         mesh.dist_factor = 1.0
         mesh.nodes,mesh.node_flags = import_nodes(mesh.prefix)
@@ -422,9 +491,129 @@ class Mesh():
 
         plt.show()
 
+    def tricontourf(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],title=[],
+                    levels=20,cmap='turbo',logscale=False,xunit='m',yunit='m'): #wrapped #contourf plots
+        if xunit=='nanometer' or xunit=='nm':
+            xunit = 'nm'
+            x_factor = 1e9
+        elif xunit=='micrometer' or xunit=='um':
+            xunit = '$\mu$m'
+            x_factor = 1e6
+        elif xunit=='millimeter' or xunit=='mm':
+            xunit = 'mm'
+            x_factor = 1e3
+        else:
+            xunit = 'm'
+            x_factor = 1.0
+        
+        if yunit=='nanometer' or yunit=='nm':
+            yunit = 'nm'
+            y_factor = 1e9
+        elif yunit=='micrometer' or yunit=='um':
+            yunit = '$\mu$m'
+            y_factor = 1e6
+        elif yunit=='millimeter' or yunit=='mm':
+            yunit = 'mm'
+            y_factor = 1e3
+        else:
+            yunit = 'm'
+            y_factor = 1.0
+
+        if len(f_in)==len(self.nodes):
+            n_ind = np.where(~self.is_on_outside_domain)[0]
+            x = self.nodes[n_ind,0]
+            y = self.nodes[n_ind,1]
+            f = f_in[n_ind]
+        else:
+            x = self.elem_mids[:,0]
+            y = self.elem_mids[:,1]
+            f = f_in
+
+        #!!!found bug when vmin and vmax are the same!!!
+        if vmin==[]:
+            vmin = min(f)
+
+        if vmax==[]:
+            vmax = max(f)
+
+        if logscale:
+            #z = numpy.ma.masked_invalid(z)
+            #vmin, vmax = z.min(), z.max()
+            #z = z.filled(fill_value=-999)
+            vmin = max(vmin,1e-12)
+            f = np.ma.masked_where(f<=0,f)
+            f = f.filled(fill_value=1e-12)
+            level_exp = np.arange(np.floor(np.log10(vmin)),
+                                  np.ceil(np.log10(vmax)+1))
+            levels = np.ceil(np.log10(levels)).astype(int)
+            level_exp = np.linspace(level_exp[0],level_exp[-1],
+                                    (len(level_exp)-1)*levels+1)
+            levels = np.power(10,level_exp)
+            norm = matplotlib.colors.LogNorm()
+            parser = {'levels':levels,'cmap':cmap,'norm':norm,'extend':'min'}
+        else:
+            levels = np.linspace(vmin,vmax,levels)
+            norm = None
+            parser = {'levels':levels,'cmap':cmap,'norm':norm,
+                      'vmin':vmin,'vmax':vmax}
+
+        x = x*x_factor
+        y = y*y_factor
+        fig,ax = plt.subplots()
+        cs = ax.tricontourf(x,y,f,**parser)
+        cbar = fig.colorbar(cs,ax=ax)
+        ax.set_aspect('equal')
+        ax.set_xlabel('X ('+xunit+')')
+        ax.set_ylabel('Y ('+yunit+')')
+
+        if self.axis_symmetry=='X':
+            ax.tricontourf(x,-y,f,**parser)
+        elif self.axis_symmetry=='Y':
+            ax.tricontourf(-x,y,f,**parser)
+
+        if len(xlim)==2:
+            xlim[0] = xlim[0]*x_factor
+            xlim[1] = xlim[1]*x_factor
+            ax.set_xlim(xlim)
+
+        if len(ylim)==2:
+            ylim[0] = ylim[0]*x_factor
+            ylim[1] = ylim[1]*x_factor
+            ax.set_ylim(ylim)
+
+        if len(title)>0:
+            ax.set_title(title)
+        plt.show()
+
     def tripcolor(self,f_in,xlim=[],ylim=[],vmin=[],vmax=[],title=[],
                   edgecolor='none',cmap='YlGnBu_r',logscale=False,
-                  contour=False): #wrapped #tripcolor plots of colored elements
+                  contour=False,xunit='m',yunit='m'): #wrapped #tripcolor plots of colored elements
+        if xunit=='nanometer' or xunit=='nm':
+            xunit = 'nm'
+            x_factor = 1e9
+        elif xunit=='micrometer' or xunit=='um':
+            xunit = '$\mu$m'
+            x_factor = 1e6
+        elif xunit=='millimeter' or xunit=='mm':
+            xunit = 'mm'
+            x_factor = 1e3
+        else:
+            xunit = 'm'
+            x_factor = 1.0
+        
+        if yunit=='nanometer' or yunit=='nm':
+            yunit = 'nm'
+            y_factor = 1e9
+        elif yunit=='micrometer' or yunit=='um':
+            yunit = '$\mu$m'
+            y_factor = 1e6
+        elif yunit=='millimeter' or yunit=='mm':
+            yunit = 'mm'
+            y_factor = 1e3
+        else:
+            yunit = 'm'
+            y_factor = 1.0
+
         if len(f_in)==len(self.nodes):
             x_in = self.nodes[:,0]
             y_in = self.nodes[:,1]
@@ -438,7 +627,7 @@ class Mesh():
         #!!!found bug when vmin and vmax are the same!!!
         if vmin==[]:
             vmin = min(f)
-        
+
         if vmax==[]:
             vmax = max(f)
         
@@ -450,22 +639,23 @@ class Mesh():
             parser = {'edgecolor':edgecolor,'cmap':cmap,'norm':norm,
                       'vmin':vmin,'vmax':vmax}
 
-        x = self.nodes[:,0]
-        y = self.nodes[:,1]
+        x = self.nodes[:,0]*x_factor
+        y = self.nodes[:,1]*y_factor
         fig,ax=plt.subplots(figsize=(10,8))
-        tpc=ax.tripcolor(x,y,self.elements,facecolors=f,**parser) #wrapped
+        tpc = ax.tripcolor(x,y,self.elements,facecolors=f,**parser)
         fig.colorbar(tpc,ax=ax,location='right')
         ax.set_aspect('equal')
-        ax.set_xlabel('X (m)')
-        ax.set_ylabel('Y (m)')
-        
-        if self.axis_symmetry=='X':
-            tpc=ax.tripcolor(x,-y,self.elements,facecolors=f,**parser)
+        ax.set_xlabel('X ('+xunit+')')
+        ax.set_ylabel('Y ('+yunit+')')
 
-        if self.axis_symmetry=='Y':
-            tpc=ax.tripcolor(-x,y,self.elements,facecolors=f,**parser)
+        if self.axis_symmetry=='X':
+            ax.tripcolor(x,-y,self.elements,facecolors=f,**parser)
+        elif self.axis_symmetry=='Y':
+            ax.tripcolor(-x,y,self.elements,facecolors=f,**parser)
 
         if contour:
+            x_in = x_in*x_factor
+            y_in = y_in*y_factor
             ax.tricontour(x_in,y_in,f_in,colors='white')
             
             if self.axis_symmetry=='X':
@@ -475,9 +665,13 @@ class Mesh():
                 ax.tricontour(-x_in,y_in,f_in,colors='white')
 
         if len(xlim)==2:
+            xlim[0] = xlim[0]*x_factor
+            xlim[1] = xlim[1]*x_factor
             ax.set_xlim(xlim)
 
         if len(ylim)==2:
+            ylim[0] = ylim[0]*x_factor
+            ylim[1] = ylim[1]*x_factor
             ax.set_ylim(ylim)
 
         if len(title)>0:
@@ -765,10 +959,14 @@ class Mesh():
 
 
 class Complex():
-    def __init__(self,**kwargs): #avoid long list of inputs
-        for key,value in kwargs.items():
-            setattr(self,key,value)
-    
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            pass
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
     @classmethod
     def init_slab(cls,**kwargs): #avoid long list of inputs
         slab = cls(**kwargs)
@@ -866,5 +1064,431 @@ class Complex():
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_title('Zoom-out')
+        plt.show()
+
+
+class Sphere():
+    def __init__(self,*args,**kwargs):
+        if args:
+            pass
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def build(self):
+        pass
+
+    def visualize(self):
+        pass
+
+
+class Slab():
+    def __init__(self,*args,**kwargs):
+        if args:
+            pass
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def build(self):
+        pass
+
+    def visualize(self):
+        pass
+
+
+class Probe():
+    def __init__(self,*args,**kwargs):
+        if args:
+            pass
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+            self.build()
+
+    def build(self):
+        #user inputs of background geometry
+        radius_air = self.radius_air #radius of the air
+        height_air = self.height_air #height of the air
+        radius_water = self.radius_air #radius of thin water film
+        height_water = self.height_water #thickness of thin water film
+        radius_solid = self.radius_air #radius of the solid
+        height_solid = self.height_air #height of the solid
+
+        #user inputs of probe geometry
+        radius_tip = self.radius_tip #radius of probe tip
+        offset_tip = self.offset_tip #offset between probe tip and sw interface
+        radius_cone = self.radius_cone #radius of probe cone
+        height_cone = self.height_cone #height of probe cone
+        radius_disk = self.radius_disk #radius of probe disk
+        height_disk = self.height_disk #height of probe disk
+
+        #discretize rho
+        lambda_d = min(9e-9,height_water)
+        rho = discretize_rho(lambda_d,rho_min=0,rho_max=radius_solid)
+
+        #insert air-water interface into the discretization
+        mask = rho<height_water
+        rho = np.r_[rho[mask],height_water,rho[~mask]]
+        #ind = np.argmin((rho-height_water)**2)
+        #rho[ind] = height_water
+
+        #print out discretization
+        #print('See radial discretization below')
+        #print(rho)
+
+        #generate mesh
+        #This script only works for the same height and radius for air and solid
+        #X is the axis of symmetry
+        #Y is the longitudinal axis
+        cpts = np.zeros((0,3)) #coord_x/coord_y/flag of control points
+        segs = np.zeros((0,3)) #ind_a/ind_b/flag of line segmenets
+        holes = np.zeros((0,2)) #coord_x/coord_y
+        zones = np.zeros((0,3)) #coord_x/coord_y/area
+
+        #***********************************************************************
+        #-----------------------------------------------------------------------
+        #=======================================================================
+        #define the lowermost, rightmost, and topmost boundary points
+        radius_b = max(radius_air,radius_solid)
+        height_b = max(height_air,height_solid)
+        x = np.r_[0,radius_b,radius_b,0]
+        y = np.r_[-height_b,-height_b,height_b,height_b]
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*1]] #node flag of 1
+
+        #define the leftmost boundary points (on the axis of symmetry)
+        #skip points at two ends
+        mask = (rho>0)&(rho<offset_tip)
+        y = np.r_[-np.flipud(rho[:-1]),rho[mask],offset_tip,
+                  offset_tip+2*radius_tip,
+                  offset_tip+2*radius_tip+height_cone,
+                  offset_tip+2*radius_tip+height_cone+height_disk]
+        x = np.zeros_like(y)
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*1]] #node flag of 1
+
+        #-----------------------------------------------------------------------
+        #define the top edge points of the solid
+        #skip edge points on the axis of symmetry
+        x = np.r_[rho[1:-1],radius_solid]
+        y = np.r_[0*rho[1:-1],0]
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
+
+        #-----------------------------------------------------------------------
+        #define the top edge points of the water
+        #skip edge points on the axis of symmetry
+        x = np.r_[rho[1:-1],radius_water]
+        y = np.ones_like(x)*height_water
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
+
+        #define the bottom edge points of the water
+        #skip the bottom edge points on the axis of symmetry
+        x = np.r_[radius_water]
+        y = np.r_[0]
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
+
+        #-----------------------------------------------------------------------
+        #define the edge points on the tip surface
+        #skip edge points on the axis of symmetry
+        nA = 32
+        ns = nA+1-2
+        dA = np.pi/nA
+        phi = np.arange(1,ns+1)*dA-np.pi/2 #half the circle
+        x = radius_tip*np.cos(phi)+0.0
+        y = radius_tip*np.sin(phi)+offset_tip+radius_tip
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
+
+        #-----------------------------------------------------------------------
+        #define the edge points on the cone surface
+        x = np.r_[radius_cone]
+        y = np.r_[height_cone]+offset_tip+2*radius_tip
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
+
+        #-----------------------------------------------------------------------
+        #define inner control points along the cantilever
+        x = np.r_[radius_disk,radius_disk]
+        y = np.r_[0,height_disk]+offset_tip+2*radius_tip+height_cone
+        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
+
+        #***********************************************************************
+        #-----------------------------------------------------------------------
+        #=======================================================================
+        #define the segments on the lowermost boundary
+        x = np.r_[0,radius_b]
+        y = np.r_[-radius_b,-radius_b]
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.bottom_bound]]
+
+        #define the segments on the rightmost boundary
+        x = np.r_[radius_b,radius_b]
+        y = np.r_[-radius_b,radius_b]
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.right_bound]]
+
+        #define the segments on the topmost boundary
+        x = np.r_[0,radius_b]
+        y = np.r_[radius_b,radius_b]
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.top_bound]]
+
+        #define the segments on the leftmost boundary (axis of symmetry)
+        mask = (rho>0)&(rho<offset_tip)
+        y = np.r_[-radius_b,-np.flipud(rho),rho[mask],offset_tip,
+                  offset_tip+2*radius_tip,offset_tip+2*radius_tip+height_cone,
+                  offset_tip+2*radius_tip+height_cone+height_disk,radius_b]
+        x = np.zeros_like(y)
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.axis_symmetry]]
+
+        #-----------------------------------------------------------------------
+        #define the segments on the top edge of the solid (solid-liquid interface)
+        x = np.r_[rho[:-1],radius_solid]
+        y = np.zeros_like(x)
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.sw_interface]]
+
+        #-----------------------------------------------------------------------
+        #define the segments on the right edge of the water
+        if radius_water<radius_air:
+            x = np.r_[radius_water,radius_water]
+            y = np.r_[0,height_water]
+            for i in range(len(x)-1):
+                ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+                ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+                segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.aw_interface]]
+
+        #define the segments on the top edge of the water
+        #x = np.r_[0,radius_water]
+        #y = np.r_[height_water,height_water]
+        x = np.r_[rho[rho<radius_water],radius_water]
+        y = np.zeros_like(x)+height_water
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.aw_interface]]
+
+        #-----------------------------------------------------------------------
+        #define the segments along the bottom tip surface
+        nA = 32
+        ns = nA+1-2
+        dA = np.pi/nA
+        phi = np.arange(0,nA//2+1)*dA-np.pi/2 #half the circle
+        #print(phi*180/np.pi)
+        x = radius_tip*np.cos(phi)+0.0
+        y = radius_tip*np.sin(phi)+offset_tip+radius_tip
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
+
+    #     #define the segments along the top tip surface
+    #     nA = 32
+    #     ns = nA+1-2
+    #     dA = np.pi/nA
+    #     phi = np.arange(nA//2,nA+1)*dA-np.pi/2 #half the circle
+    #     #print(phi*180/np.pi)
+    #     x = radius_tip*np.cos(phi)+0.0
+    #     y = radius_tip*np.sin(phi)+offset_tip+radius_tip
+    #     for i in range(len(x)-1):
+    #         ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+    #         ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+    #         segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
+
+        #-----------------------------------------------------------------------
+        #define the right segments along the cone surface
+        x = np.r_[radius_tip,radius_cone]
+        y = np.r_[0,height_cone+radius_tip]+offset_tip+radius_tip
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
+
+    #     #define the top segments along the cone surface
+    #     x = np.r_[0,radius_cone]
+    #     y = np.r_[height_cone,height_cone]+offset_tip+2*radius_tip
+    #     for i in range(len(x)-1):
+    #         ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+    #         ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+    #         segs = np.r_[segs,np.c_[ind_a,ind_b,100]]
+
+        #-----------------------------------------------------------------------
+        #define the segments along the remaining cantilever surface
+        x = np.r_[0,radius_disk,radius_disk,radius_cone]
+        y = np.r_[height_disk,height_disk,0,0]+offset_tip+2*radius_tip+height_cone
+        for i in range(len(x)-1):
+            ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+            ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
+
+        #***********************************************************************
+        #-----------------------------------------------------------------------
+        #=======================================================================
+        #define markers for holes and zones
+    #     x = np.r_[0,0,0,0,0,0]+radius_tip/2 #solid,water,tip,cone,arm,air
+    #     y = np.r_[-height_solid/2,height_water/2,offset_tip+radius_tip,
+    #               offset_tip+2*radius_tip+height_cone/2,
+    #               offset_tip+2*radius_tip+height_cone+height_disk/2,
+    #               height_air/4]
+    #     area = np.r_[1,1,1,100,100,900]
+    #     zones = np.r_[zones,np.c_[x,y,area]]
+        x = np.r_[0]+radius_tip/2 #cantilever tip
+        y = np.r_[offset_tip+radius_tip]
+        holes = np.r_[holes,np.c_[x,y]]
+
+        x = np.r_[0,0,0]+radius_tip/2 #solid,water,air
+        y = np.r_[-height_solid/2,height_water/2,
+                  offset_tip+2*radius_tip+height_cone+height_disk*2]
+        area = np.r_[100,1,100]*1e-12
+        zones = np.r_[zones,np.c_[x,y,area]]
+        self.cpts = cpts
+        self.segs = segs
+        self.holes = holes
+        self.zones = zones
+
+        #***********************************************************************
+        #-----------------------------------------------------------------------
+        #=======================================================================
+        #write poly file and call triangle
+        mesh_prefix = self.mesh_prefix
+        dist_factor = self.dist_factor
+
+        if self.build_mesh:
+            build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor)
+            call_triangle(mesh_prefix,'triangle')
+
+    def visualize(self):
+        nodes,node_flags = import_nodes(self.mesh_prefix)
+        elements,elem_flags = import_elements(self.mesh_prefix)
+        edges,edge_flags = import_edges(self.mesh_prefix)
+        nodes = nodes/self.dist_factor #unscale nodes
+        print('THE NUMBER OF NODES IS: %d'%len(nodes))
+        print('THE NUMBER OF ELEMENTS IS: %d'%len(elements))
+        print('THE NUMBER OF EDGES IS: %d'%len(edges))
+        print('node_flags',np.unique(node_flags))
+        print('elem_flags',np.unique(elem_flags))
+        print('edge_flags',np.unique(edge_flags))
+        print('')
+
+        disp_factor = 1e6
+        cpts = self.cpts
+        segs = self.segs
+        x = cpts[segs[:,:-1].astype(int),0]
+        y = cpts[segs[:,:-1].astype(int),1]
+
+        radius_air = self.radius_air
+        radius_tip = self.radius_tip
+        radius_disk = self.radius_disk
+        height_water = self.height_water
+
+        fig,ax = plt.subplots(2,2,figsize=(8,8))
+        axs = ax.flatten()
+
+        axs[0].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
+        axs[0].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
+        axs[0].set_xlabel('X ($\mu$m)')
+        axs[0].set_ylabel('Y ($\mu$m)')
+        axs[0].set_aspect('equal')
+        axs[0].set_xlim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
+        axs[0].set_ylim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
+        axs[0].set_title('Zoom Out')
+
+        axs[1].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
+        axs[1].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
+        axs[1].set_xlabel('X ($\mu$m)')
+        axs[1].set_ylabel('Y ($\mu$m)')
+        axs[1].set_aspect('equal')
+        axs[1].set_xlim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
+        axs[1].set_ylim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
+        axs[1].set_title('Zoom In: Cantilever')
+
+        axs[2].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
+        axs[2].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
+        axs[2].set_xlabel('X ($\mu$m)')
+        axs[2].set_ylabel('Y ($\mu$m)')
+        axs[2].set_aspect('equal')
+        axs[2].set_xlim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
+        axs[2].set_ylim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
+        axs[2].set_title('Zoom In: Tip')
+
+        axs[3].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
+        axs[3].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
+        axs[3].set_xlabel('X ($\mu$m)')
+        axs[3].set_ylabel('Y ($\mu$m)')
+        axs[3].set_aspect('equal')
+        axs[3].set_xlim(-height_water*10*disp_factor,height_water*10*disp_factor)
+        axs[3].set_ylim(-height_water*10*disp_factor,height_water*10*disp_factor)
+        axs[3].set_title('Zoom In: Water')
+
+        plt.tight_layout()
+        plt.show()
+
+        #***********************************************************************
+        #-----------------------------------------------------------------------
+        #=======================================================================
+        x = nodes[:,0]*disp_factor
+        y = nodes[:,1]*disp_factor
+
+        fig,ax=plt.subplots(2,2,figsize=(8,8),dpi=80)
+        axs=ax.flatten()
+
+        mask=(elem_flags<=3)|(elem_flags>=4)
+        axs[0].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
+        axs[0].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        axs[0].set_xlabel('X ($\mu$m)')
+        axs[0].set_ylabel('Y ($\mu$m)')
+        axs[0].set_aspect('equal')
+        axs[0].set_xlim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
+        axs[0].set_ylim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
+        axs[0].set_title('Zoom Out')
+
+        mask=(elem_flags<=3)|(elem_flags>=4)
+        axs[1].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
+        axs[1].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        mask=(elem_flags>=1)&(elem_flags<=5)
+        axs[1].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:orange')
+        axs[1].set_xlabel('X ($\mu$m)')
+        axs[1].set_ylabel('Y ($\mu$m)')
+        axs[1].set_aspect('equal')
+        axs[1].set_xlim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
+        axs[1].set_ylim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
+        axs[1].set_title('Zoom In: Cantilever')
+
+        mask=(elem_flags<=3)|(elem_flags>=4)
+        axs[2].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
+        axs[2].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        mask=(elem_flags>=1)&(elem_flags<=5)
+        axs[2].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:orange')
+        axs[2].set_xlabel('X ($\mu$m)')
+        axs[2].set_ylabel('Y ($\mu$m)')
+        axs[2].set_aspect('equal')
+        axs[2].set_xlim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
+        axs[2].set_ylim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
+        axs[2].set_title('Zoom In: Tip')
+
+        mask=(elem_flags<=3)|(elem_flags>=4)
+        axs[3].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
+        axs[3].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        mask=(elem_flags>=2)&(elem_flags<=2)
+        axs[3].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:orange')
+        axs[3].set_xlabel('X ($\mu$m)')
+        axs[3].set_ylabel('Y ($\mu$m)')
+        axs[3].set_aspect('equal')
+        axs[3].set_xlim(-height_water*10*disp_factor,height_water*10*disp_factor)
+        axs[3].set_ylim(-height_water*10*disp_factor,height_water*10*disp_factor)
+        axs[3].set_title('Zoom In: Water')
+
+        plt.tight_layout()
         plt.show()
 

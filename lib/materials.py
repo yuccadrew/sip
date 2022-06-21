@@ -59,14 +59,21 @@ def build_s(physics,x,y,u,*args,**kwargs): #fixed potential at infinity
 
 
 class Domain():
-    def __init__(self,mesh,pde):
+    def __init__(self,*args,**kwargs):
         #combine mesh and pde to determine domain attributes
-        self._set_domain(mesh,pde)
-        self._scale_by_rot_factor(mesh)
-        self._scale_by_dist_factor(mesh)
-        self._set_sparsity()
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            self._set_materials(mesh,pde)
+            self._scale_by_rot_factor(mesh)
+            self._scale_by_dist_factor(mesh)
+            self._set_sparsity()
 
-    def _set_domain(self,mesh,pde):
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def _set_materials(self,mesh,pde):
         #combine mesh and pde to determine domain attributes
         n_node = len(mesh.nodes)
         n_elem = len(mesh.elements)
@@ -230,14 +237,21 @@ class Domain():
 
 
 class Stern():
-    def __init__(self,mesh,pde):
+    def __init__(self,*args,**kwargs):
         #combine mesh and pde to determine stern attributes
-        self._set_stern(mesh,pde)
-        self._scale_by_rot_factor(mesh)
-        self._scale_by_dist_factor(mesh)
-        self._set_sparsity()
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            self._set_materials(mesh,pde)
+            self._scale_by_rot_factor(mesh)
+            self._scale_by_dist_factor(mesh)
+            self._set_sparsity()
+        
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
     
-    def _set_stern(self,mesh,pde):
+    def _set_materials(self,mesh,pde):
         #combine mesh and pde to determine stern attributes
         n_node = len(mesh.nodes)
         n_edge = len(mesh.edges)
@@ -396,22 +410,29 @@ class Stern():
 
 
 class Robin():
-    def __init__(self,mesh,pde):
+    def __init__(self,*args,**kwargs):
         #combine mesh and pde to determin robin attributes
-        self._set_robin(mesh,pde)
-        self._scale_by_rot_factor(mesh)
-        self._scale_by_dist_factor(mesh)
-        self._set_sparsity()
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            self._set_materials(mesh,pde)
+            self._scale_by_rot_factor(mesh)
+            self._scale_by_dist_factor(mesh)
+            self._set_sparsity()
 
-    def _set_robin(self,mesh,pde):
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def _set_materials(self,mesh,pde):
         #combine mesh and pde to determine robin attributes
         n_node = len(mesh.nodes)
         n_edge = len(mesh.edges)
         n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
-        
+
         self.g_s = np.zeros((n_edge,n_rep),dtype=pde.dtype)
         self.q_s = np.zeros((n_edge,n_rep,n_rep),dtype=pde.dtype)
-        
+
         attributes = ['g_s','q_s']
 
         for attr in pde.__dict__.keys():
@@ -538,11 +559,18 @@ class Robin():
 
 
 class Dirichlet():
-    def __init__(self,mesh,pde):
+    def __init__(self,*args,**kwargs):
         #combine mesh and pde to determine dirichlet attributes
-        self._set_dirichlet(mesh,pde)
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            self._set_materials(mesh,pde)
 
-    def _set_dirichlet(self,mesh,pde):
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def _set_materials(self,mesh,pde):
         #combine mesh and pde to determine dirichlet attributes
         n_node = len(mesh.nodes)
         n_rep = len(pde.c_x[list(pde.c_x.keys())[0]])
@@ -553,7 +581,7 @@ class Dirichlet():
 
         #update dirichlet attributes accordingly
         attributes = ['s_n']
-        
+
         for attr in pde.__dict__.keys():
             if attr not in attributes:
                 continue
@@ -734,29 +762,33 @@ class Dirichlet():
 
 
 class PDE():
-    def __init__(self,**kwargs): #avoid long list of inputs
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
         self.dtype = None
         self.shape = None
-        for key,value in kwargs.items():
-            setattr(self,key,value)
-            #print(key,value,type(value))
-            if type(value) is dict:
-                for ky in value.keys():
-                    if type(value[ky]) is list:
-                        #print(ky,flatten_list(value[ky]))
-                        for val in flatten_list(value[ky]):
-                            if type(val) is complex:
-                                self.dtype = complex
+        if args:
+            pass
 
-                        if self.shape is None:
-                            self.shape = (len(value),len(value))
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+                #print(key,value,type(value))
+                if type(value) is dict:
+                    for ky in value.keys():
+                        if type(value[ky]) is list:
+                            #print(ky,flatten_list(value[ky]))
+                            for val in flatten_list(value[ky]):
+                                if type(val) is complex:
+                                    self.dtype = complex
+
+                            if self.shape is None:
+                                self.shape = (len(value),len(value))
 
         if self.dtype is None:
             self.dtype = float
-        
+
         if self.shape is None:
             self.shape = (0,0)
-    
+
     def _set_dtype(self):
         self.dtype = float
         for attr in self.__dict__.keys():
@@ -836,70 +868,32 @@ class PDE():
                 print('')
 
 
-class StaticPDE(PDE):
-    def __init__(self,physics): #avoid long list of inputs
-        attributes = ['c_x','c_y','a','f','s_n','q_s']
-        for attr in attributes:
-            self.__dict__[attr] = {}
+class StatPNP(PDE):
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            physics = args[0]
+            attributes = ['c_x','c_y','a','f','s_n','q_s']
+            for attr in attributes:
+                self.__dict__[attr] = {}
 
-        self.func_a = functools.partial(build_a,physics)
-        self.func_f = functools.partial(build_f,physics)
+            self.func_a = functools.partial(build_a,physics)
+            self.func_f = functools.partial(build_f,physics)
 
-        self._set_static_air(physics)
-        self._set_static_water(physics)
-        self._set_static_solid(physics)
-        self._set_static_stern_bound(physics) #Stern equation
-        self._set_static_mixed_bound(physics) #Robin B.C.
-        self._set_static_inner_bound(physics) #Dirichlet B.C.
-        self._set_static_metal_bound(physics) #Dirichlet B.C.
-        self._set_static_outer_bound(physics) #Dirichlet B.C.
-        self._set_static_unused_nodes(physics) #Dirichlet B.C.
-        self._set_dtype()
-        self._set_shape()
+            self._set_static_air(physics)
+            self._set_static_water(physics)
+            self._set_static_solid(physics)
+            self._set_static_stern_bound(physics) #Stern equation
+            self._set_static_mixed_bound(physics) #Robin B.C.
+            self._set_static_inner_bound(physics) #Dirichlet B.C.
+            self._set_static_metal_bound(physics) #Dirichlet B.C.
+            self._set_static_outer_bound(physics) #Dirichlet B.C.
+            self._set_static_unused_nodes(physics) #Dirichlet B.C.
+            self._set_dtype()
+            self._set_shape()
 
-#     @staticmethod
-#     def _build_a(physics):
-#         #global build_a
-#         def build_a(x,y,u): #generalized PB equation
-#             n_ion = len(physics.c_ion)
-#             a = np.zeros_like(x)
-#             for i in range(n_ion):
-#                 k = -physics.q_ion[i]/Consts.k/physics.temperature
-#                 a += physics.q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(-k)
-
-# #             i = 1
-# #             v = physics.q_ion[i]*u/Consts.k/physics.temperature
-# #             a1 = (2.0*physics.q_ion[i]**2*physics.C_ion[i]/Consts.k
-# #                   /physics.temperature*np.cosh(v)) #wrapped
-
-# #             print('a')
-# #             print(a)
-# #             print(a1)
-#             return a
-
-#         return build_a
-
-#     @staticmethod
-#     def _build_f(physics):
-#         #global build_f
-#         def build_f(x,y,u): #generalized PB equation
-#             n_ion = len(physics.c_ion)
-#             f = np.zeros_like(x)
-#             for i in range(n_ion):
-#                 k = -physics.q_ion[i]/Consts.k/physics.temperature
-#                 f += physics.q_ion[i]*physics.C_ion[i]*np.exp(k*u)*(1-k*u)
-
-# #             i = 1
-# #             v = physics.q_ion[i]*u/Consts.k/physics.temperature
-# #             f1 = (-2.0*physics.q_ion[i]*physics.C_ion[i]
-# #                   *(np.sinh(v)-np.cosh(v))*v) #wrapped
-
-# #             print('f')
-# #             print(f)
-# #             print(f1)
-#             return f
-
-#         return build_f
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
 
     def _set_static_air(self,physics):
         n_ion = len(physics.c_ion)
@@ -990,56 +984,37 @@ class StaticPDE(PDE):
         self.s_n['is_on_outside_stern'] = [None]*n_rep
         self.s_n['is_on_outside_stern'][-1] = 0.0
 
+    def decompose(self):
+        pass
 
-class PerturbPDE(PDE):
-    def __init__(self,physics): #avoid long list of inputs
-        attributes = ['c_x','c_y','alpha_x','alpha_y','a','s_n','g_s','q_s']
-        for attr in attributes:
-            self.__dict__[attr] = {}
 
-        self.func_c = functools.partial(build_c,physics)
-        self.func_alpha = functools.partial(build_alpha,physics)
-        self.func_s = functools.partial(build_s,physics)
+class PertPNP(PDE):
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            physics = args[0]
+            attributes = ['c_x','c_y','alpha_x','alpha_y','a','s_n','g_s','q_s']
+            for attr in attributes:
+                self.__dict__[attr] = {}
 
-        self._set_perturb_air(physics)
-        self._set_perturb_water(physics)
-        self._set_perturb_solid(physics)
-        self._set_perturb_stern_bound(physics)
-        self._set_perturb_mixed_bound(physics)
-        self._set_perturb_inner_bound(physics)
-        self._set_perturb_metal_bound(physics)
-        self._set_perturb_outer_bound(physics)
-        self._set_perturb_unused_nodes(physics)
-        self._set_dtype()
-        self._set_shape()
+            self.func_c = functools.partial(build_c,physics)
+            self.func_alpha = functools.partial(build_alpha,physics)
+            self.func_s = functools.partial(build_s,physics)
 
-#     @staticmethod
-#     def _build_c(physics,i):
-#         #global build_c
-#         def build_c(x,y,pot):
-#             v = np.exp(-physics.q_ion[i]*pot/Consts.k/physics.temperature)
-#             c = physics.mu_a[i]*physics.z_ion[i]*physics.c_ion[i]*v #c or C_ion
-#             return c
+            self._set_perturb_air(physics)
+            self._set_perturb_water(physics)
+            self._set_perturb_solid(physics)
+            self._set_perturb_stern_bound(physics)
+            self._set_perturb_mixed_bound(physics)
+            self._set_perturb_inner_bound(physics)
+            self._set_perturb_metal_bound(physics)
+            self._set_perturb_outer_bound(physics)
+            self._set_perturb_unused_nodes(physics)
+            self._set_dtype()
+            self._set_shape()
 
-#         return build_c
-
-#     @staticmethod
-#     def _build_alpha(physics,i):
-#         #global build_alpha
-#         def build_alpha(x,y,grad):
-#             alpha = physics.mu_a[i]*physics.z_ion[i]*grad #grad_x or grad_y
-#             return alpha
-
-#         return build_alpha
-
-#     @staticmethod
-#     def _build_s(physics):
-#         #global build_s
-#         def build_s(x,y,u):
-#             s = -physics.e_0[0]*x-physics.e_0[1]*y
-#             return s
-
-#         return build_s
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
 
     def _set_perturb_air(self,physics):
         n_ion = len(physics.c_ion)
@@ -1156,62 +1131,12 @@ class PerturbPDE(PDE):
         self.s_n['is_on_outside_stern'] = [None]*n_rep
         self.s_n['is_on_outside_stern'][-1] = 0.0
 
-
-class StaticPB(StaticPDE): #Poisson-Boltzmann equation
-    def __init__(self,physics): #avoid long list of inputs
-        attributes = ['c_x','c_y','a','f','a_n','f_n','s_n','g_s']
-        for attr in attributes:
-            self.__dict__[attr] = {}
-
-        self.func_a = functools.partial(build_a,physics)
-        self.func_f = functools.partial(build_f,physics)
-
-        self.c_x['is_in_water'] = [[physics.perm_a]]
-        self.c_y['is_in_water'] = [[physics.perm_a]]
-        self.a['is_on_water'] = [['func_a']] #can be either a or a_n 
-        self.f['is_on_water'] = ['func_f'] #can be either f or f_n
-        #self.a_n['is_on_water'] = [[StaticPDE._build_a(physics)]]
-        #self.f_n['is_on_water'] = [StaticPDE._build_f(physics)]
-        #self.a_n['is_on_water'] = [['func_a']]
-        #self.f_n['is_on_water'] = ['func_f']
-        self.g_s['is_with_mixed_bound'] = [1.0*physics.sigma_solid]
-        self.s_n['is_on_outside_water'] = [0.0]
-        self._set_dtype()
-        self._set_shape()
-
-    def decompose(self): #to use build_a and build_f externally
-        pb1 = PDE()
-        pb2 = PDE()
-
-        pb1.c_x = copy.deepcopy(self.c_x)
-        pb1.c_y = copy.deepcopy(self.c_y)
-        pb1.g_s = copy.deepcopy(self.g_s)
-        pb1.s_n = copy.deepcopy(self.s_n)
-        
-        pb2.c_x = {'is_in_water':[[0.0]]}
-        pb2.c_y = {'is_in_water':[[0.0]]}
-        pb2.a_n = {'is_on_water':[[1.0]]} #should not matter if a or a_n
-        pb2.f_n = {'is_on_water':[1.0]} #should not matter if f or f_n
-        
-        pb1._set_dtype()
-        pb1._set_shape()
-
-        pb2._set_dtype()
-        pb2._set_shape()
-        
-        return pb1,pb2
-
-
-class PerturbPNP(PerturbPDE): #Poisson-Nernst-Planck equation
-    def __init__(self,physics): #avoid long list of inputs
-        super().__init__(physics)
-
     def decompose(self): #to use build_c and build_alpha externally
         n_rep = len(self.c_x[list(self.c_x.keys())[0]])
-        
+
         pnp1 = PDE()
         pnp2 = PDE()
-        
+
         pnp1.c_x = copy.deepcopy(self.c_x)
         pnp1.c_y = copy.deepcopy(self.c_y)
         pnp1.a = copy.deepcopy(self.a)
@@ -1242,10 +1167,112 @@ class PerturbPNP(PerturbPDE): #Poisson-Nernst-Planck equation
 
         return pnp1,pnp2
 
+
+class StatPB(PDE): #Poisson-Boltzmann equation
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            physics = args[0]
+            attributes = ['c_x','c_y','a','f','a_n','f_n','s_n','g_s']
+            for attr in attributes:
+                self.__dict__[attr] = {}
+
+            self.func_a = functools.partial(build_a,physics)
+            self.func_f = functools.partial(build_f,physics)
+
+            self.c_x['is_in_water'] = [[physics.perm_a]]
+            self.c_y['is_in_water'] = [[physics.perm_a]]
+            self.a['is_on_water'] = [['func_a']] #can be either a or a_n 
+            self.f['is_on_water'] = ['func_f'] #can be either f or f_n
+            #self.a_n['is_on_water'] = [[StaticPDE._build_a(physics)]]
+            #self.f_n['is_on_water'] = [StaticPDE._build_f(physics)]
+            #self.a_n['is_on_water'] = [['func_a']]
+            #self.f_n['is_on_water'] = ['func_f']
+            self.g_s['is_with_mixed_bound'] = [1.0*physics.sigma_solid]
+            self.s_n['is_on_outside_water'] = [0.0]
+            self._set_dtype()
+            self._set_shape()
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def decompose(self): #to use build_a and build_f externally
+        pb1 = PDE()
+        pb2 = PDE()
+
+        pb1.c_x = copy.deepcopy(self.c_x)
+        pb1.c_y = copy.deepcopy(self.c_y)
+        pb1.g_s = copy.deepcopy(self.g_s)
+        pb1.s_n = copy.deepcopy(self.s_n)
+
+        pb2.c_x = {'is_in_water':[[0.0]]}
+        pb2.c_y = {'is_in_water':[[0.0]]}
+        pb2.a_n = {'is_on_water':[[1.0]]} #should not matter if a or a_n
+        pb2.f_n = {'is_on_water':[1.0]} #should not matter if f or f_n
+
+        pb1._set_dtype()
+        pb1._set_shape()
+
+        pb2._set_dtype()
+        pb2._set_shape()
+
+        return pb1,pb2
+
+
+# class PertPNP(PertPDE): #Poisson-Nernst-Planck equation
+#     def __init__(self,*args,**kwargs): #avoid long list of inputs
+#         if args:
+#             physics = args[0]
+#             super().__init__(physics)
+
+#         if kwargs:
+#             for key,value in kwargs.items():
+#                 setattr(self,key,value)
+
+#     def decompose(self): #to use build_c and build_alpha externally
+#         n_rep = len(self.c_x[list(self.c_x.keys())[0]])
+
+#         pnp1 = PDE()
+#         pnp2 = PDE()
+
+#         pnp1.c_x = copy.deepcopy(self.c_x)
+#         pnp1.c_y = copy.deepcopy(self.c_y)
+#         pnp1.a = copy.deepcopy(self.a)
+#         pnp1.g_s = copy.deepcopy(self.g_s)
+#         pnp1.q_s = copy.deepcopy(self.q_s)
+
+#         pnp2.c_x = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+#         pnp2.c_y = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+        
+#         pnp2.alpha_x = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+#         pnp2.alpha_y = {'is_in_water':[[0.0]*n_rep for i in range(n_rep)]}
+
+#         for i in range(n_rep-2):
+#             pnp1.c_x['is_in_water'][i][-2] = 0.0
+#             pnp1.c_y['is_in_water'][i][-2] = 0.0
+
+#             pnp2.c_x['is_in_water'][i][-2] = 1.0 #for sparsity
+#             pnp2.c_y['is_in_water'][i][-2] = 1.0 #for sparsity
+
+#             pnp2.alpha_x['is_in_water'][i][i] = 1.0 #for sparsity
+#             pnp2.alpha_y['is_in_water'][i][i] = 1.0 #for sparsity
+
+#         pnp1._set_dtype()
+#         pnp1._set_shape()
+
+#         pnp2._set_dtype()
+#         pnp2._set_shape()
+
+#         return pnp1,pnp2
+
 class Physics(Consts):
-    def __init__(self,**kwargs): #avoid long list of inputs
-        for key,value in kwargs.items():
-            setattr(self,key,value)
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            pass
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
 
         #self.C_ion = [val*Consts.n for val in self.c_ion]
         #self.Q_ion = [val*Consts.e for val in self.z_ion]
@@ -1261,24 +1288,21 @@ class Physics(Consts):
         #sigma_init is dominated by Debye length
         #if Debye length << sphere radius; vice versa        
         n_ion = len(self.c_ion)
-        self.lambda_d = [0.0]*n_ion #Debye length
-        self.Q = [0.0]*n_ion #thermal energy
+        self.kappa = [0.0]*n_ion #inverse Debye length
+        self.zeta = [0.0]*n_ion #thermal energy
         unsigned_sigma_init = [0.0]*n_ion
         for i in range(n_ion):
-            self.Q[i] = Consts.k*self.temperature/abs(self.z_ion[i]*Consts.e)
-            if self.c_ion[i]>0:
-                self.lambda_d[i] = np.sqrt(self.perm_a*Consts.k*self.temperature
-                                    /2/(self.z_ion[i]*Consts.e)**2/self.c_ion[i]
-                                    /Consts.n) #wrapped
-            else:
-                self.lambda_d[i] = 0.0
+            self.kappa[i] = np.sqrt(2*(self.z_ion[i]*Consts.e)**2*self.c_ion[i]
+                                    *Consts.n/self.perm_a/Consts.k
+                                    /self.temperature) #wrapped
+            self.zeta[i] = Consts.k*self.temperature/abs(self.z_ion[i]*Consts.e)
 
             if self.radius_a>0:
-                kappa = 1/self.lambda_d[i]+1/self.radius_a
+                kappa = self.kappa[i]+1/self.radius_a
             else:
-                kappa = 1/self.lambda_d[i]
+                kappa = self.kappa[i]
 
-            unsigned_sigma_init[i] = 0.01*self.Q[i]*self.perm_a*kappa
+            unsigned_sigma_init[i] = 0.01*self.zeta[i]*self.perm_a*kappa
 
         self.sigma_init = min(unsigned_sigma_init)*np.sign(self.sigma_solid)
 #         for i in range(n_ion):
@@ -1305,7 +1329,7 @@ class Physics(Consts):
 
     def compute_anpot(self,zeta,is_sigma,x,y,z):
         radius_a = self.radius_a
-        lambda_d = self.lambda_d[0]
+        lambda_d = 1/self.kappa[0]
 
         #if radius_a is 0 return ansol_slab else return ansol_sphere
         if lambda_d==0:
@@ -1333,8 +1357,8 @@ class Physics(Consts):
         print('TEMPERATURE IS:',self.temperature,' [K]')
         print('ION COCENTRATION[0] AT INFINITY IS:',self.c_ion[0],'[mol/m^3]')
         print('ION VALENCE[0] IS:',self.z_ion[0])
-        print('DEBYE LENGTH[0] IS:',self.lambda_d[0],'[m]')
-        print('THERMAL ENERGY[0] IS:',self.Q[0],'[J]')
+        print('DEBYE LENGTH[0] IS:',1/self.kappa[0],'[m]')
+        print('THERMAL ENERGY[0] IS:',self.zeta[0],'[J]')
         print('POTENTIAL AT SOLID-LIQUID INTERFACE IS:',zeta, '[V]')
         print('')
         return pot
@@ -1353,7 +1377,7 @@ class Physics(Consts):
             c_ion = np.r_[self.c_ion,0.0]
             mobility = self.mu_a[0]
             diffusion = self.Dm_a[0]
-            lambda_d = self.lambda_d[0]
+            lambda_d = 1/self.kappa[0]
             lambda_1=np.sqrt(1j*freq*(2*np.pi)/diffusion+1/lambda_d**2)
             lambda_2=np.sqrt(1j*freq*(2*np.pi)/diffusion)
 
@@ -1401,7 +1425,10 @@ class Physics(Consts):
 
 
 class Survey():
-    def __init__(self,**kwargs): #avoid long list of inputs
-        for key,value in kwargs.items():
-            setattr(self,key,value)
+    def __init__(self,*args,**kwargs): #avoid long list of inputs
+        if args:
+            pass
 
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)

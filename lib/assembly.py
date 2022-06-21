@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.matlib
 import multiprocessing as mp
-import functools,time
+import functools,h5py,time
 
 from scipy import sparse
 from scipy.sparse import csr_matrix
@@ -9,6 +9,7 @@ from scipy.sparse.linalg import spsolve
 from tqdm import tqdm
 from empymod.utils import check_time,conv_warning
 from empymod.model import tem
+from .mesh import Mesh
 from .materials import Domain,Stern,Robin,Dirichlet
 from .materials import Consts
 
@@ -544,27 +545,56 @@ def solve_pert(domain,stern,robin,dirichlet,ratio,freq):
 
 
 class FEM():
-    def __init__(self,mesh,pde):
-        domain = Domain(mesh,pde)
-        stern = Stern(mesh,pde)
-        robin = Robin(mesh,pde)
-        dirichlet = Dirichlet(mesh,pde)
+    def __init__(self,*args,**kwargs):
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            domain = Domain(mesh,pde)
+            stern = Stern(mesh,pde)
+            robin = Robin(mesh,pde)
+            dirichlet = Dirichlet(mesh,pde)
 
-        domain.K1,domain.K2,domain.b1,domain.b2 = assemble_Ke2d(mesh,domain)
-        stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
-        robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
+            domain.K1,domain.K2,domain.b1,domain.b2 = assemble_Ke2d(mesh,domain)
+            stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
+            robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
 
+            self.mesh = mesh
+            self.pde = pde
+            self.domain = domain
+            self.stern = stern
+            self.robin = robin
+            self.dirichlet = dirichlet
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def save(self,hf_prefix):
+        hf = h5py.File(hf_prefix+'.h5','w')
+        hf.create_dataset('sol',data=self.sol)
+        self.mesh.save(hf.create_group('mesh'))
+        hf.close()
+
+    @classmethod
+    def load(cls,hf_prefix):
+        fem = cls()
+        hf = h5py.File(hf_prefix+'.h5','r')
+        for attr in hf.keys():
+            if type(hf[attr]) is h5py._hl.dataset.Dataset:
+                setattr(fem,attr,np.array(hf[attr][:]))
+        fem.mesh = Mesh.load(hf['mesh'])
+        hf.close()
+        return fem
+
+    def solve(self):
+        domain = self.domain
+        stern = self.stern
+        robin = self.robin
+        dirichlet = self.dirichlet
         K = domain.K1+domain.K2+stern.K1+stern.K2+robin.K1+robin.K2
         b = domain.b1+domain.b2+stern.b1+stern.b2+robin.b1+robin.b2
         K,b = set_first_kind_bc(dirichlet,K,b)
-
-        self.mesh = mesh
-        self.pde = pde
-        self.domain = domain
-        self.stern = stern
-        self.robin = robin
-        self.dirichlet = dirichlet
-        self.sol = np.reshape(solve_system(K,b),(len(mesh.nodes),-1))
+        self.sol = solve_system(K,b)
 
     def validate(self,ansol_in,interp=False,mask_in=[],xlim=[],ylim=[],
                  is_static=True):
@@ -771,26 +801,53 @@ class FEM():
         plt.show()
 
 
-class StaticFEM(FEM):
-    def __init__(self,mesh,pde):
-        pb1,pb2 = pde.decompose()
-        d1 = Domain(mesh,pb1)
-        d2 = Domain(mesh,pb2)
-        stern = Stern(mesh,pde)
-        robin = Robin(mesh,pde)
-        dirichlet = Dirichlet(mesh,pde)
-        
-        d1.K1,d1.K2,d1.b1,d1.b2 = assemble_Ke2d(mesh,d1)
-        d2.K1,d2.K2,d2.b1,d2.b2 = assemble_Ke2d(mesh,d2)
-        stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
-        robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
+class StatFEM(FEM):
+    def __init__(self,*args,**kwargs):
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            pb1,pb2 = pde.decompose()
+            d1 = Domain(mesh,pb1)
+            d2 = Domain(mesh,pb2)
+            stern = Stern(mesh,pde)
+            robin = Robin(mesh,pde)
+            dirichlet = Dirichlet(mesh,pde)
 
-        self.mesh = mesh
-        self.pde = pde
-        self.domain = [d1,d2]
-        self.stern = stern
-        self.robin = robin
-        self.dirichlet = dirichlet
+            d1.K1,d1.K2,d1.b1,d1.b2 = assemble_Ke2d(mesh,d1)
+            d2.K1,d2.K2,d2.b1,d2.b2 = assemble_Ke2d(mesh,d2)
+            stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
+            robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
+
+            self.mesh = mesh
+            self.pde = pde
+            self.domain = [d1,d2]
+            self.stern = stern
+            self.robin = robin
+            self.dirichlet = dirichlet
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def save(self,hf_prefix):
+        hf = h5py.File(hf_prefix+'.h5','w')
+        hf.create_dataset('ratio',data=self.ratio)
+        for i in range(len(self.ratio)):
+            hf.create_dataset('ratio:{0:1.2f}'.format(self.ratio[i]),
+                              data=self.ssol[i])
+        self.mesh.save(hf.create_group('mesh'))
+        hf.close()
+
+    @classmethod
+    def load(cls,hf_prefix):
+        stat = cls()
+        hf = h5py.File(hf_prefix+'.h5','r')
+        for attr in hf.keys():
+            if type(hf[attr]) is h5py._hl.dataset.Dataset:
+                setattr(stat,attr,np.array(hf[attr][:]))
+        stat.mesh = Mesh.load(hf['mesh'])
+        hf.close()
+        return stat
 
     def solve(self,ratio,sigma_init=0.002e-2,max_iter=20):
         sigma_solid = self.pde.g_s['is_with_mixed_bound'][0]
@@ -804,7 +861,7 @@ class StaticFEM(FEM):
             
             u_1 = np.zeros(np.sum(self.mesh.is_on_water),dtype=float)
             u_i = np.zeros(np.sum(self.mesh.is_on_water),dtype=float)
-            
+
             sol[i] = []
             func_stat = functools.partial(solve_stat,self.domain,self.stern,
                                           self.robin,self.dirichlet,self.mesh) #wrapped
@@ -819,13 +876,13 @@ class StaticFEM(FEM):
             for j in tqdm(range(max_iter)):
                 a_n = self.pde.func_a(x=[],y=[],u=u_i)
                 f_n = self.pde.func_f(x=[],y=[],u=u_i)
-                
+
                 sol[i].append(func_stat(sigma_i/sigma_solid,a_n,f_n))
-                
+
                 #update u_i
                 u_1[:] = u_i
                 u_i = sol[i][j][self.mesh.is_on_water,0]
-                
+
                 #update sigma_i
                 sigma_1 = sigma_i
                 sigma_i = np.min([np.abs(sigma_i*5),np.abs(sigma_diffuse)])
@@ -847,33 +904,60 @@ class StaticFEM(FEM):
             print('')
 
         self.ratio = ratio
-        self.sol = sol
+        self.ssol = sol
 
 
-class PerturbFEM(FEM):
-    def __init__(self,mesh,pde):
+class PertFEM(FEM):
+    def __init__(self,*args,**kwargs):
         #ratio = [1.0] #be careful it is fixed
         #freq = [3e4] #be careful it is fixed
         #sigma_solid = -0.01 #be careful it is fixed
+        if args:
+            mesh = args[0]
+            pde = args[1]
+            pnp1,pnp2 = pde.decompose()
+            d1 = Domain(mesh,pnp1)
+            d2 = Domain(mesh,pnp2)
+            stern = Stern(mesh,pde)
+            robin = Robin(mesh,pde)
+            dirichlet = Dirichlet(mesh,pde)
 
-        pnp1,pnp2 = pde.decompose()
-        d1 = Domain(mesh,pnp1)
-        d2 = Domain(mesh,pnp2)
-        stern = Stern(mesh,pde)
-        robin = Robin(mesh,pde)
-        dirichlet = Dirichlet(mesh,pde)
+            d1.K1,d1.K2,d1.b1,d1.b2 = assemble_Ke2d(mesh,d1)
+            #d2.K1,d2.K2,d2.b1,d2.b2 = assemble_Ke2d(mesh,d2)
+            stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
+            robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
 
-        d1.K1,d1.K2,d1.b1,d1.b2 = assemble_Ke2d(mesh,d1)
-        #d2.K1,d2.K2,d2.b1,d2.b2 = assemble_Ke2d(mesh,d2)
-        stern.K1,stern.K2,stern.b1,stern.b2 = assemble_Ke1d(mesh,stern)
-        robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
-        
-        self.mesh = mesh
-        self.pde = pde
-        self.domain = [d1,d2]
-        self.stern = stern
-        self.robin = robin
-        self.dirichlet = dirichlet
+            self.mesh = mesh
+            self.pde = pde
+            self.domain = [d1,d2]
+            self.stern = stern
+            self.robin = robin
+            self.dirichlet = dirichlet
+
+        if kwargs:
+            for key,value in kwargs.items():
+                setattr(self,key,value)
+
+    def save(self,hf_prefix):
+        hf = h5py.File(hf_prefix+'.h5','w')
+        hf.create_dataset('ratio',data=self.ratio)
+        hf.create_dataset('freq',data=self.freq)
+        for i in range(len(self.ratio)):
+            hf.create_dataset('ratio:{0:1.2f}'.format(self.ratio[i]),
+                              data=self.fsol[i])
+        self.mesh.save(hf.create_group('mesh'))
+        hf.close()
+
+    @classmethod
+    def load(cls,hf_prefix):
+        pert = cls()
+        hf = h5py.File(hf_prefix+'.h5','r')
+        for attr in hf.keys():
+            if type(hf[attr]) is h5py._hl.dataset.Dataset:
+                setattr(pert,attr,np.array(hf[attr][:]))
+        pert.mesh = Mesh.load(hf['mesh'])
+        hf.close()
+        return pert
 
     def solve(self,ratio,freq,stat=None,n_proc=1):
         mesh = self.mesh
@@ -939,7 +1023,9 @@ class PerturbFEM(FEM):
             #convert sol[i] from list to ndarray.shape (n_freq,n_node,n_rep)
             sol[i] = np.array(sol[i])
 
-        return sol
+        self.ratio = ratio
+        self.freq = freq
+        self.fsol = sol
 
     def ftsolve(self,ratio,freqtime,stat=None,signal=None,ft='dlf',ftarg={},
                 n_proc=1):
@@ -954,8 +1040,8 @@ class PerturbFEM(FEM):
         self.ft = ft
         self.ftarg = ftarg
 
-        self.fsol = self.solve(ratio,freq,stat,n_proc)
-        self.tsol = self.transform(self.fsol,freq,time,signal,ft,ftarg)
+        self.solve(ratio,freq,stat,n_proc) #compute self.fsol
+        self.transform(self.fsol,freq,time,signal,ft,ftarg) #compute self.tsol
 
     def argft(self,freqtime,signal=None,ft='dlf',ftarg={}):
         #define more default parameters
@@ -985,7 +1071,8 @@ class PerturbFEM(FEM):
                 conv_warning(conv, ftarg, 'Fourier', verb=3)
                 tsol[i] = np.reshape(tEM,(len(time),np.sum(mask),-1))
 
-        return tsol
+        self.time = time
+        self.tsol = tsol
 
     def animate(self,freq=[],time=[],i=0,xlim=[],ylim=[],xscale='linear',
                 yscale='linear'):
@@ -1067,7 +1154,89 @@ class PerturbFEM(FEM):
         
         plt.tight_layout()
         plt.show()
-            
+
+
+    def animate2(self,freq=[],time=[],i=0,xlim=[],ylim=[],xscale='linear',
+                yscale='linear'):
+        nodes = self.mesh.nodes[self.mesh.is_on_stern,:]
+        if yscale=='log':
+            fsol = np.abs(self.fsol[i][:,self.mesh.is_on_stern,:])
+            tsol = np.abs(self.tsol[i])
+        else:
+            fsol = self.fsol[i][:,self.mesh.is_on_stern,:]
+            tsol = self.tsol[i]
+        
+        f_ind = [0]*len(freq)
+        for j in range(len(freq)):
+            f_ind[j] = np.argmin((self.freq-freq[j])**2)
+        
+        t_ind = [0]*len(time)
+        for j in range(len(time)):
+            t_ind[j] = np.argmin((self.time-time[j])**2)
+        
+        fig,ax = plt.subplots(2,2,sharex=False,figsize=(10,8))
+        axes = ax.flatten()
+        
+        labels = []
+        for j in range(len(freq)):
+            axes[0].plot(nodes[:,0],np.real(fsol[f_ind[j],:,-2]),'.')
+            axes[1].plot(nodes[:,0],np.real(fsol[f_ind[j],:,-1]),'.')
+            labels.append('$f=%.2e$ Hz'%(freq[j]))
+        #axes[1].legend(labels,loc='upper right',bbox_to_anchor=(1.75,0.75))
+        axes[0].legend(labels,loc='lower right')
+        
+        labels = []
+        for j in range(len(time)):
+            tsol_max = np.max(np.abs(tsol[t_ind[j],:,-1]))
+            axes[2].plot(nodes[:,0],tsol[t_ind[j],:,-2],'.')
+            axes[3].plot(nodes[:,0],tsol[t_ind[j],:,-1]/tsol_max,'.')
+            labels.append('$t=%.2e$ Hz'%(time[j]))
+        axes[2].legend(labels,loc='lower right')
+
+        if len(xlim)==2:
+            axes[0].set_xlim(xlim)
+            axes[1].set_xlim(xlim)
+            axes[2].set_xlim(xlim)
+            axes[3].set_xlim(xlim)
+        
+        if len(ylim)==2:
+            axes[0].set_ylim(ylim)
+            axes[1].set_ylim(ylim)
+            axes[2].set_ylim(ylim)
+            axes[3].set_ylim(ylim)
+        
+        axes[0].set_xscale(xscale)
+        axes[1].set_xscale(xscale)
+        axes[2].set_xscale(xscale)
+        axes[3].set_xscale(xscale)
+        
+        axes[0].set_yscale(yscale)
+        axes[1].set_yscale(yscale)
+        axes[2].set_yscale(yscale)
+        axes[3].set_yscale(yscale)
+        
+        axes[0].set_xlabel('X (m)')
+        axes[1].set_xlabel('X (m)')
+        axes[2].set_xlabel('X (m)')
+        axes[3].set_xlabel('X (m)')
+        
+        axes[0].set_ylabel('$\delta U_s \;(V)$')
+        axes[1].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        axes[2].set_ylabel('$\delta U_s \;(V)$')
+        axes[3].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+
+        #axes[0].set_ylabel('(V)')
+        #axes[1].set_ylabel('(C/m^2)')
+        #axes[2].set_ylabel('(V)')
+        #axes[3].set_ylabel('(C/m^2)')
+        
+        axes[0].set_title('Frequency Domain')
+        axes[1].set_title('Frequency Domain')
+        axes[2].set_title('Time Domain')
+        axes[3].set_title('Time Domain')
+        
+        plt.tight_layout()
+        plt.show()
         
     def plot(self,x,y,i=0):
         nodes = self.mesh.nodes[self.mesh.is_on_stern,:]
