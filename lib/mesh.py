@@ -3,6 +3,7 @@ import subprocess
 import time
 import matplotlib
 from cycler import cycler
+from numpy import float as dp
 
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-poster')
@@ -22,8 +23,7 @@ Flags.bottom_bound = 12
 Flags.left_bound = 13
 Flags.right_bound = 14
 
-#def build_polyfile(cpts,segs,holes,zones,mesh_prefix,dist_factor):
-def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
+def build_polyfile(mesh_prefix,cpts,segs,holes,zones):
     print('Writing '+mesh_prefix+'.poly')
     print('')
     #build the poly file
@@ -35,8 +35,8 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
     #write the vertices
     cnt = 1
     for i in range(len(cpts)):
-        x = cpts[i,0]*dist_factor
-        y = cpts[i,1]*dist_factor
+        x = cpts[i,0]
+        y = cpts[i,1]
         flag = cpts[i,2]
         s = "{0:6.0F} {1:20.6E} {2:20.6E} {3:6.0F}\n"
         f1.write(s.format(cnt,x,y,flag))
@@ -62,8 +62,8 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
     f1.write('{0:6.0F}\n'.format(len(holes)))
 
     for i in range(len(holes)):
-        x = holes[i,0]*dist_factor
-        y = holes[i,1]*dist_factor
+        x = holes[i,0]
+        y = holes[i,1]
         s = '{0:6.0F} {1:20.6E} {2:20.6E} 1\n'
         f1.write(s.format(i+1,x,y))
     f1.write('\n')
@@ -72,9 +72,9 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor):
     f1.write('{0:6.0F}\n'.format(len(zones)))
 
     for i in range(len(zones)):
-        x = zones[i,0]*dist_factor
-        y = zones[i,1]*dist_factor
-        area = zones[i,2]*dist_factor**2
+        x = zones[i,0]
+        y = zones[i,1]
+        area = zones[i,2]
         s = '{0:6.0F} {1:20.6E} {2:20.6E} {3:6.0F} {4:12.6E}\n'
         f1.write(s.format(i+1,x,y,i+1,area))
 
@@ -280,6 +280,277 @@ def discretize_rho(lambda_d,rho_min,rho_max):
     return rho
 
 
+#modified from capsol GeneratateGrid
+def generate_grid(**kwargs):
+    #default inputs
+    n = 1000 #number of grids in x
+    m = 1000 #number of grids in z+
+    l_js = 500 #number of grids in z-; gap between tip apex and sample surface not accounted
+    h0 = dp(0.5) #[nm] #minimum grid size in x and z; fixed grid size in the gap
+    rho_max = dp(20e6) #[nm] #box size in x
+    z_max = dp(20e6) #[nm] #box size in z
+    d_min = dp(20) #[nm] #minimum separation between tip apex and sample surface
+    d_max = dp(20) #[nm] #maximum separation between tip apex and sample surface
+    id_step = 2 #[nm] #istep (stepsize=istep*h0); z=z+idstep*h0 
+    Hsam = dp(1e6) #[nm] #thickness_sample
+
+    #update inputs according to kwargs
+    for key,value in kwargs.items():
+        if key=='n':
+            n = value
+        elif key=='m':
+            m = value
+        elif key=='l_js':
+            l_js = value
+        elif key=='h0':
+            h0 = dp(value)
+        elif key=='rho_max':
+            rho_max = dp(value)
+        elif key=='z_max':
+            z_max = dp(value)
+        elif key=='d_min':
+            d_min = dp(value)
+        elif key=='d_max':
+            d_max = dp(value)
+        elif key=='id_step':
+            id_step = value
+        elif key=='Hsam':
+            Hsam = dp(value)
+
+    r = np.zeros(n+1,dtype=dp) #x in[0,rho_max]
+    hn = np.zeros(n+1,dtype=dp) #x in [0,rho_max]
+    hm = np.zeros(m+1,dtype=dp) #z in[0,z_max]
+    zm = np.zeros(m+1,dtype=dp) #z in[0,z_max]
+
+    Nuni = 1
+    for i in range(0,Nuni):
+        r[i] = h0*i
+        hn[i] = h0
+    
+    r[Nuni] = h0*Nuni
+    
+    qn = dp(1.012)
+    # find the growth factor
+    for qn in np.arange(1.0+1e-4,1.5+1e-4,1e-4,dtype=dp):
+        x = h0*(1-qn**(n-Nuni))/(1-qn) #sum of geometric series
+        if (x>=rho_max-r[Nuni]):
+            break
+
+    hn[Nuni] = h0*(rho_max-r[Nuni])/x
+    r[Nuni+1] = np.sum(hn[0:Nuni+1])
+    for i in range(Nuni+2,n+1):
+        hn[i-1] = hn[i-2]*qn
+        r[i] = np.sum(hn[0:i])
+    hn[n] = hn[n-1]*qn
+
+    #Z+ direction
+    Nuni = 1
+    hm[1:Nuni+1] = h0
+    for j in range(1,Nuni+1):
+        zm[j] = h0*j
+
+    q = dp(1.010)
+    for qm in np.arange(1.0+1e-4,1.5+1e-4,1e-4,dtype=dp):
+        x = h0*(1-qm**(m-Nuni))/(1-qm)
+        if (x>=z_max-zm[Nuni]):
+            break
+
+    hm[Nuni+1] = h0*(z_max-zm[Nuni])/x
+    zm[Nuni+1] = np.sum(hm[1:Nuni+2])
+    for j in range(Nuni+2,m+1):
+        #print(j-1,hm[j-1])
+        hm[j] = hm[j-1]*qm
+        zm[j] = np.sum(hm[1:j+1])
+
+    #Z- direction
+    #Z=d_min where d_min is the minimum separation
+    #Z=Z+idstep*h0 
+    #js=-nint(Z/h0); l=l_js+(-js)
+    #allocate (hn(0:n),r(0:n),hm(-l:m),zm(-l:m))
+    z = dp(d_min) #vary with separation
+    js = int(z/h0) #vary with separation
+    l = l_js+js #l+js+int(z/h0), vary with separation
+
+    hl = np.zeros(l+1,dtype=dp) #z in [0,separation+thickness_sample]
+    zl = np.zeros(l+1,dtype=dp) #z in [0,separation,thickness_sample]
+    hl[0:js+1] = h0
+    for j in range(0,js+1):
+        zl[j] = h0*j
+    
+    #hl[0] to hl[js-1] are fixed to h0; js increases with separation
+    if l_js>0:
+        q = dp(1.02)
+        for ql in np.arange(1.0+1e-4,2.0+1e-4,1e-4,dtype=dp):
+            x = h0*(1-ql**(l_js))/(1-ql)
+            if (x>=Hsam):
+                break
+        hl[js] = h0*Hsam/x
+    else:
+        hl[js] = h0
+    
+    #when z increases from d_min to d_max
+    #zm[zm>=0] part does not change
+    #zm[(zm<0)&(zm>=-d_min)] part does not change
+    #zm[zm<-d_min] part changes to include more gap(i.e. increased separation)
+    #the number of grid between zm[zm<-d_min] and min(zm) are fixed
+    for j in range(js+1,l+1):
+        #print(hl[j],hl[j-1])
+        hl[j] = hl[j-1]*ql
+        zl[j] = np.sum(hl[0:j])
+    
+    #merge hm and hl to hm
+    #merge zm and zl to zm
+    hm = np.concatenate((np.flipud(hl),hm[1:]))
+    zm = np.concatenate((-np.flipud(zl),zm[1:]))
+
+    #np.sum(hn[:-1]) equal to r[-1]-r[0]
+    #np.sum(hm[1:]) equal to zm[-1]-zm[0]
+    return r,zm
+
+
+#modified from capsol SetupProbe
+def setup_probe(r,z,**kwargs):
+    #z = z[z>=0]
+    #default inputs
+    Rtip = 20 #[nm]
+    theta = 15 #[deg]
+    Hcone = 15e3 #[nm]
+    Rcant = 35e3 #[nm]
+    dCant = 0.5e3 #[nm]
+    
+    #update inputs according to kwargs
+    for key,value in kwargs.items():
+        if key=='Rtip':
+            Rtip = value
+        elif key=='theta':
+            theta = value
+        elif key=='Hcone':
+            Hcone = value
+        elif key=='Rcant':
+            Rcant = value
+        elif key=='dCant':
+            dCant = value
+
+    #allocate (ProbeBot(0:n) , ProbeTop(0:n))
+    n = len(r)-1
+    m = len(z)-1
+    theta = theta*np.pi/180
+    Ra = Rtip*(1.0-np.sin(theta))
+    Rc = Rtip*np.cos(theta)
+
+    probe_bot = np.zeros(n,dtype=int)
+    probe_top = np.zeros(n,dtype=int)
+    j = np.where(z>=(Hcone+dCant))[0][0] #min index
+    probe_top[:] = j
+    
+    nApex = 0
+    nCone = 0
+    nLever = 0
+    nEdge = 0
+
+    for i in range(n-1):
+        x = r[i]
+        if (x<Rc):
+            nApex = i
+            y = Rtip-np.sqrt(Rtip**2-x**2)
+            j = np.where(z>=y)[0][0] #min index
+            probe_bot[i] = j
+            j = np.where(z>=(Hcone+dCant))[0][0] #min index
+            probe_top[i] = j
+        elif (x<((Hcone-Ra)*np.tan(theta)+Rc)):
+            nCone = i
+            y = (x-Rc)/np.tan(theta)+Ra
+            j = np.where(z>=y)[0][0] #min index
+            probe_bot[i] = j
+            j = np.where(z>=(Hcone+dCant))[0][0] #min index
+            probe_top[i] = j
+        elif (x<Rcant):
+            nLever = i
+            y = Hcone
+            j = np.where(z>=y)[0][0] #min index
+            probe_bot[i] = j
+            j = np.where(z>=(Hcone+dCant))[0][0] #min index
+            probe_top[i] = j
+        elif (x<(Rcant+dCant/2)):
+            nEdge = i
+            y = Hcone+dCant/2-np.sqrt((dCant/2)**2-(x-Rcant)**2)
+            j = np.where(z>=y)[0][0] #min index
+            probe_bot[i] = j
+            j = np.where(z>=(y+2*np.sqrt((dCant/2)**2-(x-Rcant)**2)))[0][0] #min index
+            probe_top[i] = j
+
+    #fix probe_top if it overlaps with probe_bot
+    if max(probe_bot)>=min(probe_top):
+        probe_top[:] = max(probe_bot)+1
+
+    probe = np.zeros((0,5))
+    #ind = np.arange(1,nApex+1,1)
+    ind = np.arange(0,nApex+1,1)
+    flag = np.ones_like(ind)*1
+    probe = np.r_[probe,np.c_[r[ind],z[probe_bot[ind]],ind,probe_bot[ind],flag]]
+    ind = np.arange(nApex+1,nCone+1,1)
+    flag = np.ones_like(ind)*2
+    probe = np.r_[probe,np.c_[r[ind],z[probe_bot[ind]],ind,probe_bot[ind],flag]]
+    ind = np.arange(nCone+1,nLever+1,1)
+    flag = np.ones_like(ind)*3
+    probe = np.r_[probe,np.c_[r[ind],z[probe_bot[ind]],ind,probe_bot[ind],flag]]
+    ind = np.arange(nLever+1,nEdge+1,1)
+    flag = np.ones_like(ind)*4
+    probe = np.r_[probe,np.c_[r[ind],z[probe_bot[ind]],ind,probe_bot[ind],flag]]
+    ind = np.flipud(np.arange(nLever+1,nEdge+1,1))
+    flag = np.ones_like(ind)*4
+    probe = np.r_[probe,np.c_[r[ind],z[probe_top[ind]],ind,probe_top[ind],flag]]
+    ind = np.flipud(np.arange(nCone+1,nLever+1,1))
+    flag = np.ones_like(ind)*3
+    probe = np.r_[probe,np.c_[r[ind],z[probe_top[ind]],ind,probe_top[ind],flag]]
+    ind = np.flipud(np.arange(nApex+1,nCone+1,1))
+    flag = np.ones_like(ind)*2
+    probe = np.r_[probe,np.c_[r[ind],z[probe_top[ind]],ind,probe_top[ind],flag]]
+    #ind = np.flipud(np.arange(1,nApex+1,1))
+    ind = np.flipud(np.arange(0,nApex+1,1))
+    flag = np.ones_like(ind)*1
+    probe = np.r_[probe,np.c_[r[ind],z[probe_top[ind]],ind,probe_top[ind],flag]]
+
+    fmt = '%15.5e %14.5e %5d %5d %5d'
+    header='  # rho, z,   i,  j,  code:  1=sphere, 2=cone, 3=cant, 4= edge'
+    comments=''
+    np.savetxt('probe.out',probe,fmt,header=header,comments='')
+    return probe
+
+
+#similar to setup_probe but to setup aw/sw interface
+def setup_hline(r,z,z0):
+    n = len(r)
+    line_top = np.zeros(n,dtype=int)+np.where(z>=z0)[0][0]
+
+    ind = np.arange(0,n)
+    line = np.c_[r[ind],z[line_top[ind]],ind,line_top[ind]]
+    return line
+
+#similar to setup_probe but to setup outermost box
+def setup_box(r,z):
+    n = len(r)
+    m = len(z)
+
+    box_bot = np.zeros(n,dtype=int)+np.argmin(z)
+    box_top = np.zeros(n,dtype=int)+np.argmax(z)
+
+    box_ls = np.zeros(m,dtype=int)+np.argmin(r)
+    box_rs = np.zeros(m,dtype=int)+np.argmax(r)
+
+    box = [None]*4
+    ind = np.arange(n)
+    box[0] = np.c_[r[ind],z[box_bot[ind]],ind,box_bot[ind]]
+    ind = np.arange(m)
+    box[1] = np.c_[r[box_rs[ind]],z[ind],box_rs[ind],ind]
+    ind = np.flipud(np.arange(n))
+    box[2] = np.c_[r[ind],z[box_top[ind]],ind,box_top[ind]]
+    ind = np.flipud(np.arange(m))
+    box[3] = np.c_[r[box_ls[ind]],z[ind],box_ls[ind],ind]
+
+    return box
+
+
 class Mesh():
     def __init__(self,*args,**kwargs): #avoid long list of inputs
         if args:
@@ -326,10 +597,9 @@ class Mesh():
     @classmethod
     def builder(cls,*args,**kwargs): #avoid long list of inputs
         mesh = cls(**kwargs)
-        mesh.dist_factor = 1.0
-        build_polyfile(mesh.prefix,mesh.cpts,mesh.segs,mesh.holes,mesh.zones,
-                       mesh.dist_factor)
+        build_polyfile(mesh.prefix,mesh.cpts,mesh.segs,mesh.holes,mesh.zones)
         call_triangle(mesh.prefix,mesh.triangle)
+        mesh.dist_factor = 1.0
         mesh.nodes,mesh.node_flags = import_nodes(mesh.prefix)
         mesh.elements,mesh.elem_flags = import_elements(mesh.prefix)
         mesh.edges,mesh.edge_flags = import_edges(mesh.prefix)
@@ -359,6 +629,8 @@ class Mesh():
         return mesh
 
     def grad2d(self,f_n):
+        #input: f_n.shape (n_node,)
+        #output: f_out.shape (n_elem,3) with f_e/f_x/f_y
         print('Computing fields and gradients in elements')
         start = time.time()
 
@@ -382,32 +654,35 @@ class Mesh():
         return f_out
 
     def flux2d(self,f_x,f_y):
-        flux = np.zeros((len(self.edges),2),dtype=float)
+        #input: f_x.shape (n_elem,)
+        #input: f_y.shape (n_elem,)
+        #output: flux.shape (n_edge,2)
+        flux = np.zeros((len(self.edges),2),dtype=f_x.dtype)
         for i in range(2): #possible two adjacent elements
             nodes = self.nodes
             mask = self.edge_to_elem[:,i]>=0
-            
+
             #vector u points from edges[:,0] to edges[:,1]
             edges = self.edges[mask,:]
-            u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0]
-            u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1]
-            u_len = np.sqrt(u_x**2+u_y**2)
+            u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0] #(n_edge,)
+            u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1] #(n_edge,)
+            u_len = np.sqrt(u_x**2+u_y**2) #(n_edge,)
             u_x = u_x/u_len
             u_y = u_y/u_len
-            
+
             #vector v points from elem_mids to edges[:,0]
-            elements = self.elements[self.edge_to_elem[mask,i],:]
-            elem_mids = self.elem_mids[self.edge_to_elem[mask,i],:]
-            v_x = nodes[edges[:,0],0]-elem_mids[:,0]
-            v_y = nodes[edges[:,0],1]-elem_mids[:,1]
+            elements = self.elements[self.edge_to_elem[mask,i],:] #(n_edge,3)
+            elem_mids = self.elem_mids[self.edge_to_elem[mask,i],:] #(n_edge,2)
+            v_x = nodes[edges[:,0],0]-elem_mids[:,0] #(n_edge,)
+            v_y = nodes[edges[:,0],1]-elem_mids[:,1] #(n_edge,)
             #v_len = np.sqrt(v_x**2+v_y**2)
             #v_x = v_x/v_len
             #v_y = v_y/v_len
 
             #vector n = v-dot(u,v)u
-            n_x = v_x-(u_x*v_x+u_y*v_y)*u_x
-            n_y = v_y-(u_x*v_x+u_y*v_y)*u_y
-            n_len = np.sqrt(n_x**2+n_y**2)
+            n_x = v_x-(u_x*v_x+u_y*v_y)*u_x #(n_edge,)
+            n_y = v_y-(u_x*v_x+u_y*v_y)*u_y #(n_edge,)
+            n_len = np.sqrt(n_x**2+n_y**2) #(n_edge,)
             n_x = n_x/n_len
             n_y = n_y/n_len
             #print(np.r_[n_x,n_y])
@@ -419,6 +694,74 @@ class Mesh():
                 flux[mask,i] = f_x*n_x+f_y*n_y #for test purpose f_x=1,f_y=1
 
         return flux
+
+    def force2d(self,f_x,f_y):
+        #input: f_x.shape (n_elem,) equal to -e_x
+        #input: f_y.shape (n_elem,) equal to -e_y
+        #output: force.shape (n_edge,2) -> f_out (n_edge,3)[mask,:]
+        nodes = self.nodes
+        elements = self.elements
+        elem_mids = self.elem_mids
+        elem_factor = self.elem_factor
+
+        mask = self.is_with_equipotential
+        edges = self.edges[mask,:]
+        edge_mids = self.edge_mids[mask,:]
+        edge_len = self.edge_len[mask]
+        edge_factor = self.edge_factor[mask]
+
+        if 'is_in_probe' not in self.__dict__.keys():
+            is_in_probe = np.zeros(len(elements),dtype=bool) #elements next to probe
+            x = elem_mids[:,0]
+            y = elem_mids[:,1]
+            for i in range(len(edges)):
+                edge_x = edge_mids[i,0]
+                edge_y = edge_mids[i,1]
+                j = np.argmin((x-edge_x)**2+(y-edge_y)**2)
+                is_in_probe[j] = True
+            self.is_in_probe = is_in_probe
+
+        #vector u points from edges[:,0] to edges[:,1]
+        u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0] #(n_edge,)[mask]
+        u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1] #(n_edge,)[mask]
+        u_len = np.sqrt(u_x**2+u_y**2) #(n_edge,)[mask]
+        u_x = u_x/u_len
+        u_y = u_y/u_len
+
+        #vector v points from elem_mids to edges[:,0]
+        #elements = self.elements[self.is_in_probe,:] #(n_edge,3)[mask,:]
+        #elem_mids = self.elem_mids[self.is_in_probe,:] #(n_edge,2)[mask,:]
+        v_x = nodes[edges[:,0],0]-elem_mids[self.is_in_probe,0] #(n_edge,)[mask]
+        v_y = nodes[edges[:,0],1]-elem_mids[self.is_in_probe,1] #(n_edge,)[mask]
+        #v_len = np.sqrt(v_x**2+v_y**2)
+        #v_x = v_x/v_len
+        #v_y = v_y/v_len
+
+        #vector n = v-dot(u,v)u
+        n_x = v_x-(u_x*v_x+u_y*v_y)*u_x #(n_edge,)[mask]
+        n_y = v_y-(u_x*v_x+u_y*v_y)*u_y #(n_edge,)[mask]
+        n_len = np.sqrt(n_x**2+n_y**2) #(n_edge,)[mask]
+        n_x = n_x/n_len
+        n_y = n_y/n_len
+        #print(np.c_[n_x,n_y,n_x*u_x+n_y*u_y])
+        #print(np.c_[u_x*edge_len,n_y*edge_len])
+
+        if True:
+            e2 = (f_x[self.is_in_probe]**2
+                 +f_y[self.is_in_probe]**2)
+            dx = abs(nodes[edges[:,1],0]-nodes[edges[:,0],0])
+            f_out = np.zeros((len(edges),3),dtype=f_x.dtype)
+            f_out[:,0] = elem_mids[self.is_in_probe,0] #x
+            f_out[:,1] = elem_mids[self.is_in_probe,1] #y
+            f_out[:,2] = e2*dx*elem_factor[self.is_in_probe]*np.sign(n_y) #force by element
+        else:
+            e2 = (f_x[self.is_in_probe]*n_x+f_y[self.is_in_probe]*n_y)**2
+            f_out = np.zeros((len(edges),3),dtype=f_x.dtype)
+            f_out[:,0] = edge_mids[:,0] #x
+            f_out[:,1] = edge_mids[:,1] #y
+            f_out[:,2] = e2*n_y*edge_len*edge_factor #force by element
+
+        return f_out
 
     def to_spherical(self,is_nodal=True):
         if is_nodal:
@@ -439,6 +782,49 @@ class Mesh():
         phi[mask] = np.arctan(y[mask]/x[mask])+np.pi
         #return rho,theta,phi
         return rho,phi
+
+    def find_edge_neigh(self,edge_mask):
+        print('Finding adjacent elements for line segments')
+        print('This will take a while')
+        start = time.time()
+        n_elem = len(self.elements)
+        n_edge = len(self.edges)
+        edge_to_elem = np.zeros((n_edge,2),dtype=int)-1
+        elem_to_edge = [[]*1 for i in range(n_elem)]
+        
+        edge_ind = np.where(edge_mask)[0]
+        for i in edge_ind:
+            mask_1 = self.edges[i,0]==self.elements[:,0]
+            mask_1 = mask_1|(self.edges[i,0]==self.elements[:,1])
+            mask_1 = mask_1|(self.edges[i,0]==self.elements[:,2])
+
+            mask_2 = self.edges[i,1]==self.elements[:,0]
+            mask_2 = mask_2|(self.edges[i,1]==self.elements[:,1])
+            mask_2 = mask_2|(self.edges[i,1]==self.elements[:,2])
+
+            ind = np.where(mask_1&mask_2)[0]
+            if len(ind)==1:
+                edge_to_elem[i,0] = ind[0]
+                elem_to_edge[ind[0]].append(i)
+            elif len(ind)==2:
+                edge_to_elem[i,0] = ind[0]
+                edge_to_elem[i,1] = ind[1]
+                elem_to_edge[ind[0]].append(i)
+                elem_to_edge[ind[1]].append(i)
+
+        #elem_to_edge = np.array(elem_to_edge,dtype=int)
+        #sort of self.edge_to_elem by columns
+        #left column: flux2d positive if (f_x,f_y) is (1,1)
+        #right column: flux2d negative if (f_x,f_y) is (1,1)
+        elapsed = time.time()-start
+        print('Time elapsed ',elapsed,'sec')
+        print('')
+        return edge_to_elem
+    
+    def find_elem_neigh(self):
+        #search by nodes may be more efficient
+        elem_to_edge = []
+        return elem_to_edge
 
     def plot(self,f,cmap='viridis'): #plots of colored lines
         x = self.nodes[self.edges,0]
@@ -692,35 +1078,32 @@ class Mesh():
         fig,ax = plt.subplots(figsize=(10,8))
         x = self.nodes[:,0]
         y = self.nodes[:,1]
-        ax.triplot(x,y,self.elements[:,:],linewidth=0.2,
-                   color='tab:blue',alpha=0.5) #wrapped
+        ax.triplot(x,y,self.elements[:,:],linewidth=0.2,color='tab:blue')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
-        
+
         if self.axis_symmetry=='X':
-            ax.triplot(x,-y,self.elements[:,:],linewidth=0.2,
-                       color='tab:blue',alpha=0.25) #wrapped
+            ax.triplot(x,-y,self.elements[:,:],linewidth=0.2,color='tab:blue')
         
         if self.axis_symmetry=='Y':
-            ax.triplot(-x,y,self.elements[:,:],linewidth=0.2,
-                       color='tab:blue',alpha=0.25) #wrapped
+            ax.triplot(-x,y,self.elements[:,:],linewidth=0.2,color='tab:blue')
 
         #plot specified elements
         for i in range(len(elem_flags)):
             mask = self.elem_flags==elem_flags[i]
             if np.sum(mask)>0:
                 ax.triplot(x,y,self.elements[mask,:],linewidth=0.2,
-                           color='tab:blue',alpha=1.0) #wrapped
+                           color='tab:orange') #wrapped
 
-        #plot all edges in the background
-        x = self.nodes[self.edges,0]
-        y = self.nodes[self.edges,1]
-        for attr in Flags.__dict__.keys():
-            if not '__' in attr:
-                mask = self.edge_flags==Flags.__dict__[attr]
-                ax.plot(x[mask,:].T,y[mask,:].T,color='tab:orange',alpha=0.2)
-        
+#         #plot all edges in the background
+#         x = self.nodes[self.edges,0]
+#         y = self.nodes[self.edges,1]
+#         for attr in Flags.__dict__.keys():
+#             if not '__' in attr:
+#                 mask = self.edge_flags==Flags.__dict__[attr]
+#                 ax.plot(x[mask,:].T,y[mask,:].T,color='tab:orange',alpha=0.2)
+
         #plot specified edges
         for i in range(len(edge_flags)):
             mask = self.edge_flags==edge_flags[i]
@@ -854,7 +1237,7 @@ class Mesh():
         self.elem_area[mask] = area
 
         #compute shape functions for line segments
-        mask = self.is_with_stern
+        mask = self.is_with_stern|self.is_with_equipotential
         basis,length = build_basis1d(self.nodes,self.edges[mask,:])
         self.edge_basis[mask,:,:] = basis
         self.edge_len[mask] = length
@@ -894,7 +1277,7 @@ class Mesh():
 
     def _set_edge_neigh(self): #efficienty to be improved
         print('Finding adjacent elements for line segments')
-        print('This will take a minute')
+        print('This will take a while')
         start = time.time()
         n_elem = len(self.elements)
         n_edge = len(self.edges)
@@ -932,7 +1315,7 @@ class Mesh():
 
     def _set_elem_neigh(self):#slower than set_edge_neigh
         print('Finding edges for triangular elements')
-        print('This will take a minute')
+        print('This will take a while')
         start = time.time()
         n_elem = len(self.elements)
         n_edge = len(self.edges)
@@ -1113,28 +1496,37 @@ class Probe():
         #user inputs of background geometry
         radius_air = self.radius_air #radius of the air
         height_air = self.height_air #height of the air
-        radius_water = self.radius_air #radius of thin water film
+        height_gap = self.height_gap #gap between tip apex and sample surface
         height_water = self.height_water #thickness of thin water film
-        radius_solid = self.radius_air #radius of the solid
         height_solid = self.height_air #height of the solid
 
         #user inputs of probe geometry
         radius_tip = self.radius_tip #radius of probe tip
-        offset_tip = self.offset_tip #offset between probe tip and sw interface
         radius_cone = self.radius_cone #radius of probe cone
         height_cone = self.height_cone #height of probe cone
         radius_disk = self.radius_disk #radius of probe disk
         height_disk = self.height_disk #height of probe disk
 
+        #user inputs of mesh discretization
+        area_air = self.area_air
+        area_water = self.area_water
+        area_solid = self.area_solid
+
         #discretize rho
-        lambda_d = min(9e-9,height_water)
-        rho = discretize_rho(lambda_d,rho_min=0,rho_max=radius_solid)
+        #lambda_d = min(9e-9,height_water)
+        #rho = discretize_rho(lambda_d,rho_min=0,rho_max=radius_solid)
+        #skip refinement between 0 and radius_solid
+        rho = np.r_[0,radius_air]
 
         #insert air-water interface into the discretization
-        mask = rho<height_water
-        rho = np.r_[rho[mask],height_water,rho[~mask]]
+        #mask = rho<height_water
+        #rho = np.r_[rho[mask],height_water,rho[~mask]]
         #ind = np.argmin((rho-height_water)**2)
         #rho[ind] = height_water
+
+        #insert height_gap into the discretization
+        #mask = rho<height_gap
+        #rho = np.r_[rho[mask],height_gap,rho[~mask]]
 
         #print out discretization
         #print('See radial discretization below')
@@ -1153,97 +1545,90 @@ class Probe():
         #-----------------------------------------------------------------------
         #=======================================================================
         #define the lowermost, rightmost, and topmost boundary points
-        radius_b = max(radius_air,radius_solid)
-        height_b = max(height_air,height_solid)
-        x = np.r_[0,radius_b,radius_b,0]
-        y = np.r_[-height_b,-height_b,height_b,height_b]
+        #radius_b = max(radius_air,radius_solid)
+        #height_b = max(height_air,height_solid)
+        x = np.r_[0,radius_air,radius_air,0]
+        y = np.r_[-height_solid-height_gap,-height_solid-height_gap,
+                  height_air,height_air]
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*1]] #node flag of 1
 
         #define the leftmost boundary points (on the axis of symmetry)
-        #skip points at two ends
-        mask = (rho>0)&(rho<offset_tip)
-        y = np.r_[-np.flipud(rho[:-1]),rho[mask],offset_tip,
-                  offset_tip+2*radius_tip,
-                  offset_tip+2*radius_tip+height_cone,
-                  offset_tip+2*radius_tip+height_cone+height_disk]
+        #skip points at two ends (top and bottom)
+        mask = (rho>0)&(rho<height_gap)
+        y = np.r_[-np.flipud(rho[:-1])-height_gap,rho[mask]-height_gap,
+                  height_water-height_gap,0.0,2*radius_tip,height_cone,
+                  height_cone+height_disk]
         x = np.zeros_like(y)
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*1]] #node flag of 1
 
         #-----------------------------------------------------------------------
         #define the top edge points of the solid
         #skip edge points on the axis of symmetry
-        x = np.r_[rho[1:-1],radius_solid]
-        y = np.r_[0*rho[1:-1],0]
+        x = np.r_[rho[1:-1],radius_air]
+        y = np.zeros_like(x)-height_gap
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #-----------------------------------------------------------------------
         #define the top edge points of the water
         #skip edge points on the axis of symmetry
-        x = np.r_[rho[1:-1],radius_water]
-        y = np.ones_like(x)*height_water
-        cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
-
-        #define the bottom edge points of the water
-        #skip the bottom edge points on the axis of symmetry
-        x = np.r_[radius_water]
-        y = np.r_[0]
+        x = np.r_[rho[1:-1],radius_air]
+        y = np.zeros_like(x)+height_water-height_gap
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #-----------------------------------------------------------------------
-        #define the edge points on the tip surface
+        #define the side edge points on the tip surface
         #skip edge points on the axis of symmetry
         nA = 32
-        ns = nA+1-2
         dA = np.pi/nA
-        phi = np.arange(1,ns+1)*dA-np.pi/2 #half the circle
-        x = radius_tip*np.cos(phi)+0.0
-        y = radius_tip*np.sin(phi)+offset_tip+radius_tip
+        phi = np.arange(1,nA)*dA-np.pi/2 #half the circle
+        x = radius_tip*np.cos(phi)
+        y = radius_tip*np.sin(phi)+radius_tip #so that tip apex sits at Y=0
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #-----------------------------------------------------------------------
-        #define the edge points on the cone surface
+        #define the side edge points on the cone surface
         x = np.r_[radius_cone]
-        y = np.r_[height_cone]+offset_tip+2*radius_tip
+        y = np.r_[height_cone]
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #-----------------------------------------------------------------------
-        #define inner control points along the cantilever
+        #define the side edge points along the cantilever
         x = np.r_[radius_disk,radius_disk]
-        y = np.r_[0,height_disk]+offset_tip+2*radius_tip+height_cone
+        y = np.r_[0,height_cone+height_disk]
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #***********************************************************************
         #-----------------------------------------------------------------------
         #=======================================================================
         #define the segments on the lowermost boundary
-        x = np.r_[0,radius_b]
-        y = np.r_[-radius_b,-radius_b]
+        x = np.r_[0,radius_air]
+        y = np.r_[-height_solid-height_gap,-height_solid-height_gap]
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.bottom_bound]]
 
         #define the segments on the rightmost boundary
-        x = np.r_[radius_b,radius_b]
-        y = np.r_[-radius_b,radius_b]
+        x = np.r_[radius_air,radius_air]
+        y = np.r_[-height_solid-height_gap,height_air]
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.right_bound]]
 
         #define the segments on the topmost boundary
-        x = np.r_[0,radius_b]
-        y = np.r_[radius_b,radius_b]
+        x = np.r_[0,radius_air]
+        y = np.r_[height_air,height_air]
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.top_bound]]
 
         #define the segments on the leftmost boundary (axis of symmetry)
-        mask = (rho>0)&(rho<offset_tip)
-        y = np.r_[-radius_b,-np.flipud(rho),rho[mask],offset_tip,
-                  offset_tip+2*radius_tip,offset_tip+2*radius_tip+height_cone,
-                  offset_tip+2*radius_tip+height_cone+height_disk,radius_b]
+        mask = (rho>0)&(rho<height_gap)
+        y = np.r_[-height_solid-height_gap,-np.flipud(rho[:-1])-height_gap,
+                  rho[mask]-height_gap,height_water-height_gap,0.0,
+                  2*radius_tip,height_cone,height_cone+height_disk,height_air]
         x = np.zeros_like(y)
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
@@ -1252,28 +1637,17 @@ class Probe():
 
         #-----------------------------------------------------------------------
         #define the segments on the top edge of the solid (solid-liquid interface)
-        x = np.r_[rho[:-1],radius_solid]
-        y = np.zeros_like(x)
+        x = np.r_[rho[:-1],radius_air]
+        y = np.zeros_like(x)-height_gap
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.sw_interface]]
 
         #-----------------------------------------------------------------------
-        #define the segments on the right edge of the water
-        if radius_water<radius_air:
-            x = np.r_[radius_water,radius_water]
-            y = np.r_[0,height_water]
-            for i in range(len(x)-1):
-                ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
-                ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
-                segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.aw_interface]]
-
         #define the segments on the top edge of the water
-        #x = np.r_[0,radius_water]
-        #y = np.r_[height_water,height_water]
-        x = np.r_[rho[rho<radius_water],radius_water]
-        y = np.zeros_like(x)+height_water
+        x = np.r_[rho[:-1],radius_air]
+        y = np.zeros_like(x)+height_water-height_gap
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
@@ -1282,51 +1656,50 @@ class Probe():
         #-----------------------------------------------------------------------
         #define the segments along the bottom tip surface
         nA = 32
-        ns = nA+1-2
         dA = np.pi/nA
         phi = np.arange(0,nA//2+1)*dA-np.pi/2 #half the circle
         #print(phi*180/np.pi)
-        x = radius_tip*np.cos(phi)+0.0
-        y = radius_tip*np.sin(phi)+offset_tip+radius_tip
+        x = radius_tip*np.cos(phi)
+        y = radius_tip*np.sin(phi)+radius_tip
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
 
-    #     #define the segments along the top tip surface
-    #     nA = 32
-    #     ns = nA+1-2
-    #     dA = np.pi/nA
-    #     phi = np.arange(nA//2,nA+1)*dA-np.pi/2 #half the circle
-    #     #print(phi*180/np.pi)
-    #     x = radius_tip*np.cos(phi)+0.0
-    #     y = radius_tip*np.sin(phi)+offset_tip+radius_tip
-    #     for i in range(len(x)-1):
-    #         ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
-    #         ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
-    #         segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
+#         #define the segments along the top tip surface
+#         nA = 32
+#         ns = nA+1-2
+#         dA = np.pi/nA
+#         phi = np.arange(nA//2,nA+1)*dA-np.pi/2 #half the circle
+#         #print(phi*180/np.pi)
+#         x = radius_tip*np.cos(phi)+0.0
+#         y = radius_tip*np.sin(phi)+height_gap+radius_tip
+#         for i in range(len(x)-1):
+#             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+#             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+#             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
 
         #-----------------------------------------------------------------------
-        #define the right segments along the cone surface
+        #define the bottom segments along the cone surface
         x = np.r_[radius_tip,radius_cone]
-        y = np.r_[0,height_cone+radius_tip]+offset_tip+radius_tip
+        y = np.r_[radius_tip,height_cone]
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
             segs = np.r_[segs,np.c_[ind_a,ind_b,Flags.equipotential_surf]]
 
-    #     #define the top segments along the cone surface
-    #     x = np.r_[0,radius_cone]
-    #     y = np.r_[height_cone,height_cone]+offset_tip+2*radius_tip
-    #     for i in range(len(x)-1):
-    #         ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
-    #         ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
-    #         segs = np.r_[segs,np.c_[ind_a,ind_b,100]]
+#         #define the top segments along the cone surface
+#         x = np.r_[0,radius_cone]
+#         y = np.r_[height_cone,height_cone]+height_gap+2*radius_tip
+#         for i in range(len(x)-1):
+#             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
+#             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
+#             segs = np.r_[segs,np.c_[ind_a,ind_b,100]]
 
         #-----------------------------------------------------------------------
-        #define the segments along the remaining cantilever surface
+        #define the remaining segments along the cantilever surface
         x = np.r_[0,radius_disk,radius_disk,radius_cone]
-        y = np.r_[height_disk,height_disk,0,0]+offset_tip+2*radius_tip+height_cone
+        y = np.r_[height_disk,height_disk,0,0]+height_cone
         for i in range(len(x)-1):
             ind_a = np.argmin((cpts[:,0]-x[i])**2+(cpts[:,1]-y[i])**2)
             ind_b = np.argmin((cpts[:,0]-x[i+1])**2+(cpts[:,1]-y[i+1])**2)
@@ -1335,23 +1708,109 @@ class Probe():
         #***********************************************************************
         #-----------------------------------------------------------------------
         #=======================================================================
+        #use mesh_grid to define control points and line segments
+        if 'mesh_grid' in self.__dict__.keys():
+            cpts = np.zeros((0,3))
+            segs = np.zeros((0,3))
+
+            x = self.mesh_grid[0]
+            y = self.mesh_grid[1]
+
+            x = x[x<=radius_air]
+            y = y[(y>=-height_solid-height_gap)&(y<=height_air)]
+
+            xg,yg = np.meshgrid(x,y)
+            xg = xg.ravel()
+            yg = yg.ravel()
+            cpts = np.c_[xg,yg,np.zeros_like(xg)]
+
+            probe = setup_probe(x,y)
+            ind_a = probe[:-1,2]+probe[:-1,3]*len(x)
+            ind_b = probe[1:,2]+probe[1:,3]*len(x)
+            segs = np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                         +Flags.equipotential_surf]
+            
+            line = setup_hline(x,y,-height_gap)
+            ind_a = line[:-1,2]+line[:-1,3]*len(x)
+            ind_b = line[1:,2]+line[1:,3]*len(x)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                                    +Flags.sw_interface]]
+
+            line = setup_hline(x,y,height_water-height_gap)
+            ind_a = line[:-1,2]+line[:-1,3]*len(x)
+            ind_b = line[1:,2]+line[1:,3]*len(x)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                                    +Flags.aw_interface]]
+
+            box = setup_box(x,y)
+            ind_a = box[0][:-1,2]+box[0][:-1,3]*len(x)
+            ind_b = box[0][1:,2]+box[0][1:,3]*len(x)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                                    +Flags.bottom_bound]]
+            ind_a = box[1][:-1,2]+box[1][:-1,3]*len(x)
+            ind_b = box[1][1:,2]+box[1][1:,3]*len(x)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                                    +Flags.right_bound]]
+            ind_a = box[2][:-1,2]+box[2][:-1,3]*len(x)
+            ind_b = box[2][1:,2]+box[2][1:,3]*len(x)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                                    +Flags.top_bound]]
+            ind_a = box[3][:-1,2]+box[3][:-1,3]*len(x)
+            ind_b = box[3][1:,2]+box[3][1:,3]*len(x)
+            segs = np.r_[segs,np.c_[ind_a,ind_b,np.zeros_like(ind_a)
+                                    +Flags.axis_symmetry]]            
+
+            #update the background and probe geometry
+            mask = segs[:,-1]==Flags.sw_interface
+            z_sw = cpts[segs[mask,:-1].astype(int),1][0][0]
+            mask = segs[:,-1]==Flags.aw_interface
+            z_aw = cpts[segs[mask,:-1].astype(int),1][0][0]
+
+            radius_air = max(x)
+            height_air = max(y)
+            height_gap = abs(z_sw)
+            height_water = height_gap-abs(z_aw)
+            height_solid = abs(min(y))-height_water
+
+            self.radius_air = radius_air
+            self.height_air = height_air
+            self.height_gap = height_gap
+            self.height_water = height_water
+            self.height_solid = height_solid
+            
+            radius_tip = max(probe[probe[:,-1]==1,0])
+            radius_cone = max(probe[probe[:,-1]==2,0])
+            radius_disk = max(probe[probe[:,-1]==3,0])
+            mask = probe[:,-1]==3
+            height_disk = max(probe[mask,1])-min(probe[mask,1])
+            height_cone = max(probe[probe[:,-1]==2,1])-height_disk
+
+            self.radius_tip = radius_tip
+            self.radius_cone = radius_cone
+            self.height_cone = height_cone
+            self.radius_disk = radius_disk
+            self.height_disk = height_disk
+
+        #***********************************************************************
+        #-----------------------------------------------------------------------
+        #=======================================================================
         #define markers for holes and zones
-    #     x = np.r_[0,0,0,0,0,0]+radius_tip/2 #solid,water,tip,cone,arm,air
-    #     y = np.r_[-height_solid/2,height_water/2,offset_tip+radius_tip,
-    #               offset_tip+2*radius_tip+height_cone/2,
-    #               offset_tip+2*radius_tip+height_cone+height_disk/2,
-    #               height_air/4]
-    #     area = np.r_[1,1,1,100,100,900]
-    #     zones = np.r_[zones,np.c_[x,y,area]]
-        x = np.r_[0]+radius_tip/2 #cantilever tip
-        y = np.r_[offset_tip+radius_tip]
+#         x = np.r_[0,0,0,0,0,0]+radius_tip/2 #solid,water,tip,cone,arm,air
+#         y = np.r_[-height_solid/2,height_water/2,height_gap+radius_tip,
+#                   height_gap+2*radius_tip+height_cone/2,
+#                   height_gap+2*radius_tip+height_cone+height_disk/2,
+#                   height_air/4]
+#         area = np.r_[1,1,1,100,100,900]
+#         zones = np.r_[zones,np.c_[x,y,area]]
+        x = np.r_[radius_tip/2] #cantilever tip
+        y = np.r_[height_cone/2]
         holes = np.r_[holes,np.c_[x,y]]
 
-        x = np.r_[0,0,0]+radius_tip/2 #solid,water,air
-        y = np.r_[-height_solid/2,height_water/2,
-                  offset_tip+2*radius_tip+height_cone+height_disk*2]
-        area = np.r_[100,1,100]*1e-12
+        x = np.r_[0,0,0]+radius_air*0.99 #solid,water,air
+        y = np.r_[-height_solid*0.99,height_water/2-height_gap,height_air*0.99]
+        area = np.r_[area_solid,area_water,area_air]
         zones = np.r_[zones,np.c_[x,y,area]]
+
         self.cpts = cpts
         self.segs = segs
         self.holes = holes
@@ -1361,18 +1820,43 @@ class Probe():
         #-----------------------------------------------------------------------
         #=======================================================================
         #write poly file and call triangle
-        mesh_prefix = self.mesh_prefix
-        dist_factor = self.dist_factor
+        if 'dist_factor' in self.__dict__.keys():
+            cpts[:,0] = cpts[:,0]*self.dist_factor
+            cpts[:,1] = cpts[:,1]*self.dist_factor
+            zones[:,2] = zones[:,2]*self.dist_factor**2 
 
         if self.build_mesh:
-            build_polyfile(mesh_prefix,cpts,segs,holes,zones,dist_factor)
-            call_triangle(mesh_prefix,'triangle')
+            build_polyfile(self.mesh_prefix,cpts,segs,holes,zones)
+            call_triangle(self.mesh_prefix,'triangle')
 
-    def visualize(self):
+    def triplot(self,xunit=[],yunit=[]):
+        radius_air = self.radius_air
+        radius_tip = self.radius_tip
+        radius_disk = self.radius_disk
+        height_water = self.height_water
+        height_gap = self.height_gap
+
+        if xunit=='nanometer' or xunit=='nm':
+            xunit = 'nm'
+        elif xunit=='micrometer' or xunit=='um':
+            xunit = '$\mu$m'
+        elif xunit=='millimeter' or xunit=='mm':
+            xunit = 'mm'
+        else:
+            xunit = 'm'
+
+        if yunit=='nanometer' or yunit=='nm':
+            yunit = 'nm'
+        elif yunit=='micrometer' or yunit=='um':
+            yunit = '$\mu$m'
+        elif yunit=='millimeter' or yunit=='mm':
+            yunit = 'mm'
+        else:
+            yunit = 'm'
+
         nodes,node_flags = import_nodes(self.mesh_prefix)
         elements,elem_flags = import_elements(self.mesh_prefix)
         edges,edge_flags = import_edges(self.mesh_prefix)
-        nodes = nodes/self.dist_factor #unscale nodes
         print('THE NUMBER OF NODES IS: %d'%len(nodes))
         print('THE NUMBER OF ELEMENTS IS: %d'%len(elements))
         print('THE NUMBER OF EDGES IS: %d'%len(edges))
@@ -1381,112 +1865,158 @@ class Probe():
         print('edge_flags',np.unique(edge_flags))
         print('')
 
-        disp_factor = 1e6
-        cpts = self.cpts
-        segs = self.segs
-        x = cpts[segs[:,:-1].astype(int),0]
-        y = cpts[segs[:,:-1].astype(int),1]
-
-        radius_air = self.radius_air
-        radius_tip = self.radius_tip
-        radius_disk = self.radius_disk
-        height_water = self.height_water
-
-        fig,ax = plt.subplots(2,2,figsize=(8,8))
-        axs = ax.flatten()
-
-        axs[0].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
-        axs[0].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
-        axs[0].set_xlabel('X ($\mu$m)')
-        axs[0].set_ylabel('Y ($\mu$m)')
-        axs[0].set_aspect('equal')
-        axs[0].set_xlim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
-        axs[0].set_ylim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
-        axs[0].set_title('Zoom Out')
-
-        axs[1].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
-        axs[1].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
-        axs[1].set_xlabel('X ($\mu$m)')
-        axs[1].set_ylabel('Y ($\mu$m)')
-        axs[1].set_aspect('equal')
-        axs[1].set_xlim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
-        axs[1].set_ylim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
-        axs[1].set_title('Zoom In: Cantilever')
-
-        axs[2].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
-        axs[2].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
-        axs[2].set_xlabel('X ($\mu$m)')
-        axs[2].set_ylabel('Y ($\mu$m)')
-        axs[2].set_aspect('equal')
-        axs[2].set_xlim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
-        axs[2].set_ylim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
-        axs[2].set_title('Zoom In: Tip')
-
-        axs[3].plot(x.T*disp_factor,y.T*disp_factor,'-',color='tab:blue')
-        axs[3].plot(cpts[:,0]*disp_factor,cpts[:,1]*disp_factor,'.',color='tab:orange')
-        axs[3].set_xlabel('X ($\mu$m)')
-        axs[3].set_ylabel('Y ($\mu$m)')
-        axs[3].set_aspect('equal')
-        axs[3].set_xlim(-height_water*10*disp_factor,height_water*10*disp_factor)
-        axs[3].set_ylim(-height_water*10*disp_factor,height_water*10*disp_factor)
-        axs[3].set_title('Zoom In: Water')
-
-        plt.tight_layout()
-        plt.show()
-
-        #***********************************************************************
-        #-----------------------------------------------------------------------
-        #=======================================================================
-        x = nodes[:,0]*disp_factor
-        y = nodes[:,1]*disp_factor
+        x = nodes[:,0]
+        y = nodes[:,1]
 
         fig,ax=plt.subplots(2,2,figsize=(8,8),dpi=80)
         axs=ax.flatten()
 
         mask=(elem_flags<=3)|(elem_flags>=4)
         axs[0].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
-        axs[0].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        axs[0].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
         axs[0].set_xlabel('X ($\mu$m)')
         axs[0].set_ylabel('Y ($\mu$m)')
         axs[0].set_aspect('equal')
-        axs[0].set_xlim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
-        axs[0].set_ylim(-radius_air*1.1*disp_factor,radius_air*1.1*disp_factor)
+        axs[0].set_xlim(-radius_air*1.1,radius_air*1.1)
+        axs[0].set_ylim(-radius_air*1.1,radius_air*1.1)
         axs[0].set_title('Zoom Out')
 
         mask=(elem_flags<=3)|(elem_flags>=4)
         axs[1].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
-        axs[1].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        axs[1].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
         mask=(elem_flags>=1)&(elem_flags<=5)
         axs[1].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:orange')
         axs[1].set_xlabel('X ($\mu$m)')
         axs[1].set_ylabel('Y ($\mu$m)')
         axs[1].set_aspect('equal')
-        axs[1].set_xlim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
-        axs[1].set_ylim(-radius_disk*1.1*disp_factor,radius_disk*1.1*disp_factor)
+        axs[1].set_xlim(-radius_disk*1.1,radius_disk*1.1)
+        axs[1].set_ylim(-radius_disk*1.1,radius_disk*1.1)
         axs[1].set_title('Zoom In: Cantilever')
 
         mask=(elem_flags<=3)|(elem_flags>=4)
         axs[2].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
-        axs[2].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        axs[2].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
         mask=(elem_flags>=1)&(elem_flags<=5)
         axs[2].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:orange')
         axs[2].set_xlabel('X ($\mu$m)')
         axs[2].set_ylabel('Y ($\mu$m)')
         axs[2].set_aspect('equal')
-        axs[2].set_xlim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
-        axs[2].set_ylim(-radius_tip*4*disp_factor,radius_tip*4*disp_factor)
+        axs[2].set_xlim(-(radius_tip*4+height_gap),(radius_tip*4+height_gap))
+        axs[2].set_ylim(-(radius_tip*4+height_gap),(radius_tip*4+height_gap))
         axs[2].set_title('Zoom In: Tip')
 
         mask=(elem_flags<=3)|(elem_flags>=4)
         axs[3].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
-        axs[3].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue',alpha=0.5)
+        axs[3].triplot(-x,y,elements[mask,:],linewidth=0.2,color='tab:blue')
         mask=(elem_flags>=2)&(elem_flags<=2)
         axs[3].triplot(x,y,elements[mask,:],linewidth=0.2,color='tab:orange')
         axs[3].set_xlabel('X ($\mu$m)')
         axs[3].set_ylabel('Y ($\mu$m)')
         axs[3].set_aspect('equal')
-        axs[3].set_xlim(-height_water*10*disp_factor,height_water*10*disp_factor)
-        axs[3].set_ylim(-height_water*10*disp_factor,height_water*10*disp_factor)
+        axs[3].set_xlim(-height_water*10,height_water*10)
+        axs[3].set_ylim(-height_water*10,height_water*10)
+        axs[3].set_title('Zoom In: Water')
+
+        plt.tight_layout()
+        plt.show()
+    
+    def visualize(self,cpt_flags='all',seg_flags='all',xunit=[],yunit=[]):
+        if cpt_flags=='all':
+            cpt_flags = np.unique(self.cpts[:,-1])
+            #cpt_flags = np.reshape(cpt_flags,(1,-1))
+        elif cpt_flags=='none':
+            cpt_flags = []
+
+        if seg_flags=='all':
+            seg_flags = np.unique(self.segs[:,-1])
+            #seg_flags = np.reshape(seg_flags,(1,-1))
+        elif seg_flags=='none':
+            seg_flags = []
+
+        mask = np.zeros(len(self.cpts),dtype=bool)
+        for i in range(len(cpt_flags)):
+            mask = mask|(self.cpts[:,-1]==cpt_flags[i])
+        cpts = self.cpts[mask,:]
+
+        mask = np.zeros(len(self.segs),dtype=bool)
+        for i in range(len(seg_flags)):
+            mask = mask|(self.segs[:,-1]==seg_flags[i])
+        segs = self.segs[mask,:]
+
+#         if len(cpts)==0:
+#             cpts = np.zeros((0,3))
+#         else:
+#             cpts = self.cpts
+
+#         if len(segs)==0:
+#             segs = np.zeros((0,3))
+#         else:
+#             segs = self.segs
+
+        x = self.cpts[segs[:,:-1].astype(int),0]
+        y = self.cpts[segs[:,:-1].astype(int),1]
+
+        radius_air = self.radius_air
+        radius_tip = self.radius_tip
+        radius_disk = self.radius_disk
+        height_water = self.height_water
+        height_gap = self.height_gap
+        
+        if xunit=='nanometer' or xunit=='nm':
+            xunit = 'nm'
+        elif xunit=='micrometer' or xunit=='um':
+            xunit = '$\mu$m'
+        elif xunit=='millimeter' or xunit=='mm':
+            xunit = 'mm'
+        else:
+            xunit = 'm'
+        
+        if yunit=='nanometer' or yunit=='nm':
+            yunit = 'nm'
+        elif yunit=='micrometer' or yunit=='um':
+            yunit = '$\mu$m'
+        elif yunit=='millimeter' or yunit=='mm':
+            yunit = 'mm'
+        else:
+            yunit = 'm'
+        
+        fig,ax = plt.subplots(2,2,figsize=(8,8))
+        axs = ax.flatten()
+
+        axs[0].plot(x.T,y.T,'-',color='tab:blue')
+        axs[0].plot(cpts[:,0],cpts[:,1],'.',color='tab:orange')
+        axs[0].set_xlabel('X ('+xunit+')')
+        axs[0].set_ylabel('Y ('+yunit+')')
+        axs[0].set_aspect('equal')
+        axs[0].set_xlim(-radius_air*1.1,radius_air*1.1)
+        axs[0].set_ylim(-radius_air*1.1,radius_air*1.1)
+        axs[0].set_title('Zoom Out')
+
+        axs[1].plot(x.T,y.T,'-',color='tab:blue')
+        axs[1].plot(cpts[:,0],cpts[:,1],'.',color='tab:orange')
+        axs[1].set_xlabel('X ('+xunit+')')
+        axs[1].set_ylabel('Y ('+yunit+')')
+        axs[1].set_aspect('auto')
+        axs[1].set_xlim(-radius_disk*1.1,radius_disk*1.1)
+        #axs[1].set_ylim(-radius_disk*1.1,radius_disk*1.1)
+        axs[1].set_title('Zoom In: Cantilever')
+
+        axs[2].plot(x.T,y.T,'-',color='tab:blue')
+        axs[2].plot(cpts[:,0],cpts[:,1],'.',color='tab:orange')
+        axs[2].set_xlabel('X ('+xunit+')')
+        axs[2].set_ylabel('Y ('+yunit+')')
+        axs[2].set_aspect('equal')
+        axs[2].set_xlim(-(radius_tip*4+height_gap),(radius_tip*4+height_gap))
+        axs[2].set_ylim(-(radius_tip*4+height_gap),(radius_tip*4+height_gap))
+        axs[2].set_title('Zoom In: Tip')
+
+        axs[3].plot(x.T,y.T,'-',color='tab:blue')
+        axs[3].plot(cpts[:,0],cpts[:,1],'.',color='tab:orange')
+        axs[3].set_xlabel('X ($\mu$m)')
+        axs[3].set_ylabel('Y ($\mu$m)')
+        axs[3].set_aspect('equal')
+        axs[3].set_xlim(-height_water*10,height_water*10)
+        axs[3].set_ylim(-height_water*10,height_water*10)
         axs[3].set_title('Zoom In: Water')
 
         plt.tight_layout()
