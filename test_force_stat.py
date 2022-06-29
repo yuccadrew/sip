@@ -17,11 +17,11 @@ x,y = generate_grid(**inparg)
 #Probe Geometry
 probe = Probe(
     #geometry of the background slab
-    radius_air = 50e3, #radius of the air
-    height_air = 50e3, #height of the air
+    radius_air = 10e6, #radius of the air
+    height_air = 10e6, #height of the air
     height_gap = 20.0, #gap between tip apex and sample surface [nm]
     height_water = 1.0, #thickness of thin water film
-    height_solid = 50e3, #height of the solid
+    height_solid = 10e6, #height of the solid
 
     #geometry of the cantilever probe
     radius_tip = 20, #radius of probe tip [nm]
@@ -31,9 +31,9 @@ probe = Probe(
     height_disk = 0.5e3, #height of probe disk [nm]
 
     #area constraints
-    area_air = 1e8, #[nm]**2
-    area_water = 1e6, #[nm]**2
-    area_solid = 1e8, #[nm]**2
+    area_air = 1e12, #[nm]**2
+    area_water = 1e12, #[nm]**2
+    area_solid = 1e12, #[nm]**2
 
     #mesh construction parameters
     mesh_prefix = 'test',
@@ -61,8 +61,8 @@ pde = PDE(
 height_gap = np.arange(2,20+1,1)
 
 # for i in range(len(height_gap)):
-for i in range(1,len(height_gap)):
-    mesh_prefix = 'capsol/test3_s{:02.1f}nm'.format(height_gap[i])
+for i in range(0,len(height_gap)):
+    mesh_prefix = 'capsol/test4_s{:02.1f}nm'.format(height_gap[i])
     #print(mesh_prefix)
 
     #update grid discretization
@@ -98,18 +98,18 @@ for i in range(1,len(height_gap)):
     print('Right Bound:',np.unique(d_in[r_ind*len(z):r_ind*len(z)+len(z),0]),
           max(probe.cpts[:,0]))
 
-    def build_s_top(x,y,*args):
-        return interp1d(r,pot_top)(x)
+#     def build_s_top(x,y,*args):
+#         return interp1d(r,pot_top)(x)
 
-    def build_s_bot(x,y,*args):
-        return interp1d(r,pot_bot)(x)
+#     def build_s_bot(x,y,*args):
+#         return interp1d(r,pot_bot)(x)
 
-    def build_s_rs(x,y,*args):
-        return interp1d(z,pot_rs)(y)
+#     def build_s_rs(x,y,*args):
+#         return interp1d(z,pot_rs)(y)
 
-    pde.s_n['is_on_top_bound'] = [build_s_top]
-    pde.s_n['is_on_bottom_bound'] = [build_s_bot]
-    pde.s_n['is_on_right_bound'] = [build_s_rs]
+#     pde.s_n['is_on_top_bound'] = [build_s_top]
+#     pde.s_n['is_on_bottom_bound'] = [build_s_bot]
+#     pde.s_n['is_on_right_bound'] = [build_s_rs]
 
     #import mesh
     mesh = Mesh(

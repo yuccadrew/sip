@@ -3,7 +3,7 @@ import subprocess
 import time
 import matplotlib
 from cycler import cycler
-from numpy import float as dp
+from numpy import float as r_dp
 
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-poster')
@@ -38,7 +38,7 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones):
         x = cpts[i,0]
         y = cpts[i,1]
         flag = cpts[i,2]
-        s = "{0:6.0F} {1:20.6E} {2:20.6E} {3:6.0F}\n"
+        s = "{0:6.0F} {1:28.18E} {2:28.18E} {3:6.0F}\n"
         f1.write(s.format(cnt,x,y,flag))
         cnt = cnt+1
     f1.write('\n')
@@ -86,7 +86,7 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones):
 
 
 def call_triangle(mesh_prefix,triangle_path):
-    command = [triangle_path+' -pnq30Aae '+mesh_prefix+'.poly']
+    command = [triangle_path+' -pnAae '+mesh_prefix+'.poly']
     process = subprocess.Popen(command,shell=True)
     process.wait()
 
@@ -286,13 +286,13 @@ def generate_grid(**kwargs):
     n = 1000 #number of grids in x
     m = 1000 #number of grids in z+
     l_js = 500 #number of grids in z-; gap between tip apex and sample surface not accounted
-    h0 = dp(0.5) #[nm] #minimum grid size in x and z; fixed grid size in the gap
-    rho_max = dp(20e6) #[nm] #box size in x
-    z_max = dp(20e6) #[nm] #box size in z
-    d_min = dp(20) #[nm] #minimum separation between tip apex and sample surface
-    d_max = dp(20) #[nm] #maximum separation between tip apex and sample surface
+    h0 = r_dp(0.5) #[nm] #minimum grid size in x and z; fixed grid size in the gap
+    rho_max = r_dp(20e6) #[nm] #box size in x
+    z_max = r_dp(20e6) #[nm] #box size in z
+    d_min = r_dp(20) #[nm] #minimum separation between tip apex and sample surface
+    d_max = r_dp(20) #[nm] #maximum separation between tip apex and sample surface
     id_step = 2 #[nm] #istep (stepsize=istep*h0); z=z+idstep*h0 
-    Hsam = dp(1e6) #[nm] #thickness_sample
+    Hsam = r_dp(1e6) #[nm] #thickness_sample
 
     #update inputs according to kwargs
     for key,value in kwargs.items():
@@ -303,24 +303,24 @@ def generate_grid(**kwargs):
         elif key=='l_js':
             l_js = value
         elif key=='h0':
-            h0 = dp(value)
+            h0 = r_dp(value)
         elif key=='rho_max':
-            rho_max = dp(value)
+            rho_max = r_dp(value)
         elif key=='z_max':
-            z_max = dp(value)
+            z_max = r_dp(value)
         elif key=='d_min':
-            d_min = dp(value)
+            d_min = r_dp(value)
         elif key=='d_max':
-            d_max = dp(value)
+            d_max = r_dp(value)
         elif key=='id_step':
             id_step = value
         elif key=='Hsam':
-            Hsam = dp(value)
+            Hsam = r_dp(value)
 
-    r = np.zeros(n+1,dtype=dp) #x in[0,rho_max]
-    hn = np.zeros(n+1,dtype=dp) #x in [0,rho_max]
-    hm = np.zeros(m+1,dtype=dp) #z in[0,z_max]
-    zm = np.zeros(m+1,dtype=dp) #z in[0,z_max]
+    r = np.zeros(n+1,dtype=r_dp) #x in[0,rho_max]
+    hn = np.zeros(n+1,dtype=r_dp) #x in [0,rho_max]
+    hm = np.zeros(m+1,dtype=r_dp) #z in[0,z_max]
+    zm = np.zeros(m+1,dtype=r_dp) #z in[0,z_max]
 
     Nuni = 1
     for i in range(0,Nuni):
@@ -329,9 +329,9 @@ def generate_grid(**kwargs):
     
     r[Nuni] = h0*Nuni
     
-    qn = dp(1.012)
+    qn = r_dp(1.012)
     # find the growth factor
-    for qn in np.arange(1.0+1e-4,1.5+1e-4,1e-4,dtype=dp):
+    for qn in np.arange(1.0+1e-4,1.5+1e-4,1e-4,dtype=r_dp):
         x = h0*(1-qn**(n-Nuni))/(1-qn) #sum of geometric series
         if (x>=rho_max-r[Nuni]):
             break
@@ -349,8 +349,8 @@ def generate_grid(**kwargs):
     for j in range(1,Nuni+1):
         zm[j] = h0*j
 
-    q = dp(1.010)
-    for qm in np.arange(1.0+1e-4,1.5+1e-4,1e-4,dtype=dp):
+    q = r_dp(1.010)
+    for qm in np.arange(1.0+1e-4,1.5+1e-4,1e-4,dtype=r_dp):
         x = h0*(1-qm**(m-Nuni))/(1-qm)
         if (x>=z_max-zm[Nuni]):
             break
@@ -367,20 +367,20 @@ def generate_grid(**kwargs):
     #Z=Z+idstep*h0 
     #js=-nint(Z/h0); l=l_js+(-js)
     #allocate (hn(0:n),r(0:n),hm(-l:m),zm(-l:m))
-    z = dp(d_min) #vary with separation
+    z = r_dp(d_min) #vary with separation
     js = int(z/h0) #vary with separation
     l = l_js+js #l+js+int(z/h0), vary with separation
 
-    hl = np.zeros(l+1,dtype=dp) #z in [0,separation+thickness_sample]
-    zl = np.zeros(l+1,dtype=dp) #z in [0,separation,thickness_sample]
+    hl = np.zeros(l+1,dtype=r_dp) #z in [0,separation+thickness_sample]
+    zl = np.zeros(l+1,dtype=r_dp) #z in [0,separation,thickness_sample]
     hl[0:js+1] = h0
     for j in range(0,js+1):
         zl[j] = h0*j
     
     #hl[0] to hl[js-1] are fixed to h0; js increases with separation
     if l_js>0:
-        q = dp(1.02)
-        for ql in np.arange(1.0+1e-4,2.0+1e-4,1e-4,dtype=dp):
+        q = r_dp(1.02)
+        for ql in np.arange(1.0+1e-4,2.0+1e-4,1e-4,dtype=r_dp):
             x = h0*(1-ql**(l_js))/(1-ql)
             if (x>=Hsam):
                 break
@@ -695,73 +695,249 @@ class Mesh():
 
         return flux
 
-    def force2d(self,f_x,f_y):
+    def force2d(self,u):
         #input: f_x.shape (n_elem,) equal to -e_x
         #input: f_y.shape (n_elem,) equal to -e_y
         #output: force.shape (n_edge,2) -> f_out (n_edge,3)[mask,:]
-        nodes = self.nodes
-        elements = self.elements
-        elem_mids = self.elem_mids
-        elem_factor = self.elem_factor
+#         mask = self.is_with_equipotential
+#         edges = self.edges[mask,:]
+#         edge_mids = self.edge_mids[mask,:]
+#         f_out = np.zeros((len(edges),5),dtype=u.dtype)
 
-        mask = self.is_with_equipotential
-        edges = self.edges[mask,:]
-        edge_mids = self.edge_mids[mask,:]
-        edge_len = self.edge_len[mask]
-        edge_factor = self.edge_factor[mask]
+#         x = mesh_grid[0]
+#         y = mesh_grid[1]
+#         is_on_probe = np.zeros((len(self.nodes),4),dtype=bool)
+        probe = setup_probe(self.grid_x,self.grid_y)
+        n_bot = len(probe)//2
+        f_out = np.zeros((n_bot,5))
+        for i in range(n_bot):
+            x0 = self.grid_x[probe[i,2].astype(int)]
+            y0 = self.grid_y[probe[i,3].astype(int)]
+            x1 = min(self.grid_x[self.grid_x>x0])
+            y1 = max(self.grid_y[self.grid_y<y0])
+            y2 = max(self.grid_y[self.grid_y<y1])
+#             print('i',i)
+#             print(x0,x1)
 
-        if 'is_in_probe' not in self.__dict__.keys():
-            is_in_probe = np.zeros(len(elements),dtype=bool) #elements next to probe
-            x = elem_mids[:,0]
-            y = elem_mids[:,1]
-            for i in range(len(edges)):
-                edge_x = edge_mids[i,0]
-                edge_y = edge_mids[i,1]
-                j = np.argmin((x-edge_x)**2+(y-edge_y)**2)
-                is_in_probe[j] = True
-            self.is_in_probe = is_in_probe
+            dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y0)**2
+            ind_0 = np.argmin(dist2)
+            x_0 = self.nodes[ind_0,0]
+            y_0 = self.nodes[ind_0,1]
+#             print(ind_0,x0,y0)
+            
+            dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y1)**2
+            ind_1 = np.argmin(dist2)
+            x_1 = self.nodes[ind_1,0]
+            y_1 = self.nodes[ind_1,1]
+            u_1 = u[ind_1]
+#             print(ind_1,x0,y1)
+#             print(x_0,x_1)
+            
+            dist2 = (self.nodes[:,0]-x1)**2+(self.nodes[:,1]-y1)**2
+            ind_2 = np.argmin(dist2)
+            x_2 = self.nodes[ind_2,0]
+            y_2 = self.nodes[ind_2,1]
+            u_2 = u[ind_2]
 
-        #vector u points from edges[:,0] to edges[:,1]
-        u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0] #(n_edge,)[mask]
-        u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1] #(n_edge,)[mask]
-        u_len = np.sqrt(u_x**2+u_y**2) #(n_edge,)[mask]
-        u_x = u_x/u_len
-        u_y = u_y/u_len
+            dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y2)**2
+            ind_3 = np.argmin(dist2)
+            x_3 = self.nodes[ind_3,0]
+            y_3 = self.nodes[ind_3,1]
+            u_3 = u[ind_3]
 
-        #vector v points from elem_mids to edges[:,0]
-        #elements = self.elements[self.is_in_probe,:] #(n_edge,3)[mask,:]
-        #elem_mids = self.elem_mids[self.is_in_probe,:] #(n_edge,2)[mask,:]
-        v_x = nodes[edges[:,0],0]-elem_mids[self.is_in_probe,0] #(n_edge,)[mask]
-        v_y = nodes[edges[:,0],1]-elem_mids[self.is_in_probe,1] #(n_edge,)[mask]
-        #v_len = np.sqrt(v_x**2+v_y**2)
-        #v_x = v_x/v_len
-        #v_y = v_y/v_len
+            #compute f_out
+            hn = x_2-x_1
+            hm = y_1-y_3
+            ex = -(u_2-u_1)/hn #skip stepwise boundary by not using u_0
+            ey = -(u_1-u_3)/hm #skip stepwise boundary by not using u_0
+            e2 = ex**2+ey**2
+            df = 0.5*(x_0+x_1)*hn*e2
 
-        #vector n = v-dot(u,v)u
-        n_x = v_x-(u_x*v_x+u_y*v_y)*u_x #(n_edge,)[mask]
-        n_y = v_y-(u_x*v_x+u_y*v_y)*u_y #(n_edge,)[mask]
-        n_len = np.sqrt(n_x**2+n_y**2) #(n_edge,)[mask]
-        n_x = n_x/n_len
-        n_y = n_y/n_len
-        #print(np.c_[n_x,n_y,n_x*u_x+n_y*u_y])
-        #print(np.c_[u_x*edge_len,n_y*edge_len])
+            f_out[i,0] = 0.5*(x_0+x_1) #x
+            f_out[i,1] = y_0 #y
+            f_out[i,2] = 0.5*(x_0+x_1)*e2*hn
 
-        if True:
-            e2 = (f_x[self.is_in_probe]**2
-                 +f_y[self.is_in_probe]**2)
-            dx = abs(nodes[edges[:,1],0]-nodes[edges[:,0],0])
-            f_out = np.zeros((len(edges),3),dtype=f_x.dtype)
-            f_out[:,0] = elem_mids[self.is_in_probe,0] #x
-            f_out[:,1] = elem_mids[self.is_in_probe,1] #y
-            f_out[:,2] = e2*dx*elem_factor[self.is_in_probe]*np.sign(n_y) #force by element
-        else:
-            e2 = (f_x[self.is_in_probe]*n_x+f_y[self.is_in_probe]*n_y)**2
-            f_out = np.zeros((len(edges),3),dtype=f_x.dtype)
-            f_out[:,0] = edge_mids[:,0] #x
-            f_out[:,1] = edge_mids[:,1] #y
-            f_out[:,2] = e2*n_y*edge_len*edge_factor #force by element
+#         for i in range(len(edges)):
+#             ind = np.argmin(self.nodes[edges[i,:],0]) #left point
+#             is_on_probe[edges[i,ind],0] = True
+#             x0 = self.nodes[edges[i,ind],0]
+#             y0 = self.nodes[edges[i,ind],1]
+#             x1 = min(x[x>x0])
+#             y1 = max(y[y<y0])
+#             y2 = max(y[y<y1])
 
+#             dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y1)**2
+#             n_ind = np.argmin(dist2)
+#             is_on_probe[n_ind,1] = True
+#             u1 = u[n_ind]
+
+#             dist2 = (self.nodes[:,0]-x1)**2+(self.nodes[:,1]-y1)**2
+#             n_ind = np.argmin(dist2)
+#             is_on_probe[n_ind,2] = True
+#             u2 = u[n_ind]
+
+#             dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y2)**2
+#             n_ind = np.argmin(dist2)
+#             is_on_probe[n_ind,3] = True
+#             u3 = u[n_ind]
+            
+#             #start computing
+#             hn = x1-x0
+#             hm = y0-y1
+#             ex = -(u2-u1)/hn
+#             ey = -(u1-u3)/hm
+#             e2 = ex**2+ey**2
+#             df = 0.5*(x0+x1)*hn*e2
+
+#             f_out[i,0] = 0.5*(x0+x1) #x
+#             f_out[i,1] = y0 #y
+#             f_out[i,2] = 0.5*(x0+x1)*e2*hn
+        
+#         mask = edge_mids[:,0]>20 #test only!
+#         ztop = max(edge_mids[mask,1])
+#         zbot = min(edge_mids[mask,1])
+#         print(ztop,zbot)
+#         mask = edge_mids[:,1]<0.5*(ztop+zbot)
+#         f_out = f_out[mask,:]
+
+#         self.is_on_probe = is_on_probe
         return f_out
+
+#         if 'is_on_probe' not in self.__dict__.keys():
+#             x = mesh_grid[0]
+#             y = mesh_grid[1]
+#             is_on_probe = np.zeros((len(self.nodes),4),dtype=bool)
+#             for i in range(len(edges)):
+#                 ind = np.argmin(self.nodes[edges[i,:],0]) #left point
+#                 is_on_probe[edges[i,ind],0] = True
+#                 x0 = self.nodes[edges[i,ind],0]
+#                 y0 = self.nodes[edges[i,ind],1]
+#                 x1 = min(x[x>x0])
+#                 y1 = max(y[y<y0])
+#                 y2 = max(y[y<y1])
+
+#                 dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y1)**2
+#                 n_ind = np.argmin(dist2)
+#                 is_on_probe[n_ind,1] = True
+
+#                 dist2 = (self.nodes[:,0]-x1)**2+(self.nodes[:,1]-y1)**2
+#                 n_ind = np.argmin(dist2)
+#                 is_on_probe[n_ind,2] = True
+
+#                 dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y2)**2
+#                 n_ind = np.argmin(dist2)
+#                 is_on_probe[n_ind,3] = True
+#             self.is_on_probe = is_on_probe
+
+#         x0 = self.nodes[self.is_on_probe[:,0],0]
+#         x1 = self.nodes[self.is_on_probe[:,2],0]
+#         hn = x1-x0
+
+#         y0 = self.nodes[self.is_on_probe[:,0],1]
+#         y1 = self.nodes[self.is_on_probe[:,1],1]
+#         hm = y0-y1
+
+#         u1 = u[self.is_on_probe[:,1]] #under tip
+#         u2 = u[self.is_on_probe[:,2]] #under tip and move+1 along x
+#         u3 = u[self.is_on_probe[:,3]] #under tip and move-1 along y
+#         ex = -(u2-u1)/hn
+#         ey = -(u1-u3)/hm
+#         e2 = ex**2+ey**2
+
+#         f_out[:,0] = 0.5*(x0+x1) #x
+#         f_out[:,1] = y0 #y
+# #         f_out[:,2] = e2
+#         f_out[:,2] = 0.5*(x0+x1)*e2
+        
+#         ztop = max(edge_mids[:,1])
+#         mask = edge_mids[:,1]<ztop
+#         f_out = f_out[mask,:]
+
+#         return f_out
+
+#             x1 = self.nodes[self.is_on_probe[:,0],0]
+#             y1 = self.nodes[self.is_on_probe[:,1],1]
+#             u0 = u[self.is_on_probe[:,0]]
+
+#             x1 = self.nodes[self.is_on_probe[:,2]]
+#             hn = self.nodes[#x1-x0
+
+
+            #print(x_i,self.nodes[is_on_probe[:,0],0])
+            #print(y2,y1,y0)
+            #print(x0,x1)
+
+#         nodes = self.nodes
+#         elements = self.elements
+#         elem_mids = self.elem_mids
+#         elem_factor = self.elem_factor
+
+#         mask = self.is_with_equipotential
+#         edges = self.edges[mask,:]
+#         edge_mids = self.edge_mids[mask,:]
+#         edge_len = self.edge_len[mask]
+#         edge_factor = self.edge_factor[mask]
+
+#         if 'is_in_probe' not in self.__dict__.keys():
+#             is_in_probe = np.zeros(len(elements),dtype=bool) #elements next to probe
+#             x = elem_mids[:,0]
+#             y = elem_mids[:,1]
+#             for i in range(len(edges)):
+#                 edge_x = edge_mids[i,0]
+#                 edge_y = edge_mids[i,1]
+#                 j = np.argmin((x-edge_x)**2+(y-edge_y)**2)
+#                 is_in_probe[j] = True
+#             self.is_in_probe = is_in_probe
+
+#         #vector u points from edges[:,0] to edges[:,1]
+#         u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0] #(n_edge,)[mask]
+#         u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1] #(n_edge,)[mask]
+#         u_len = np.sqrt(u_x**2+u_y**2) #(n_edge,)[mask]
+#         u_x = u_x/u_len
+#         u_y = u_y/u_len
+
+#         #vector v points from elem_mids to edges[:,0]
+#         #elements = self.elements[self.is_in_probe,:] #(n_edge,3)[mask,:]
+#         #elem_mids = self.elem_mids[self.is_in_probe,:] #(n_edge,2)[mask,:]
+#         v_x = nodes[edges[:,0],0]-elem_mids[self.is_in_probe,0] #(n_edge,)[mask]
+#         v_y = nodes[edges[:,0],1]-elem_mids[self.is_in_probe,1] #(n_edge,)[mask]
+#         #v_len = np.sqrt(v_x**2+v_y**2)
+#         #v_x = v_x/v_len
+#         #v_y = v_y/v_len
+
+#         #vector n = v-dot(u,v)u
+#         n_x = v_x-(u_x*v_x+u_y*v_y)*u_x #(n_edge,)[mask]
+#         n_y = v_y-(u_x*v_x+u_y*v_y)*u_y #(n_edge,)[mask]
+#         n_len = np.sqrt(n_x**2+n_y**2) #(n_edge,)[mask]
+#         n_x = n_x/n_len
+#         n_y = n_y/n_len
+#         #print(np.c_[n_x,n_y,n_x*u_x+n_y*u_y])
+#         #print(np.c_[u_x*edge_len,n_y*edge_len])
+
+#         if False:
+#             e2 = (f_x[self.is_in_probe]**2
+#                  +f_y[self.is_in_probe]**2)
+#             hn = abs(nodes[edges[:,1],0]-nodes[edges[:,0],0])
+#             zm = np.minimum(nodes[edges[:,0],1],nodes[edges[:,1],1])
+#             f_out = np.zeros((len(edges),5),dtype=f_x.dtype)
+#             f_out[:,0] = edge_mids[:,0] #x
+#             #f_out[:,1] = edge_mids[:,1] #y
+#             f_out[:,1] = zm
+#             f_out[:,2] = e2*hn*edge_factor*np.sign(n_y) #force by element
+#             f_out[:,3] = e2*np.sign(n_y)
+#             f_out[:,4] = edge_factor*np.sign(n_y)
+#         else:
+#             e2 = (f_x[self.is_in_probe]*n_x+f_y[self.is_in_probe]*n_y)**2
+#             hn = abs(nodes[edges[:,1],0]-nodes[edges[:,0],0])
+#             zm = np.minimum(nodes[edges[:,0],1],nodes[edges[:,1],1])
+#             f_out = np.zeros((len(edges),5),dtype=f_x.dtype)
+#             f_out[:,0] = edge_mids[:,0] #x
+#             #f_out[:,1] = edge_mids[:,1] #y
+#             f_out[:,1] = zm
+#             f_out[:,2] = e2*n_y*edge_len*edge_factor #force by element
+#             f_out[:,3] = e2*np.sign(n_y)
+
+#         return f_out
 
     def to_spherical(self,is_nodal=True):
         if is_nodal:
@@ -1494,29 +1670,29 @@ class Probe():
 
     def build(self):
         #user inputs of background geometry
-        radius_air = self.radius_air #radius of the air
-        height_air = self.height_air #height of the air
-        height_gap = self.height_gap #gap between tip apex and sample surface
-        height_water = self.height_water #thickness of thin water film
-        height_solid = self.height_air #height of the solid
+        radius_air = r_dp(self.radius_air) #radius of the air
+        height_air = r_dp(self.height_air) #height of the air
+        height_gap = r_dp(self.height_gap) #gap between tip apex and sample surface
+        height_water = r_dp(self.height_water) #thickness of thin water film
+        height_solid = r_dp(self.height_air) #height of the solid
 
         #user inputs of probe geometry
-        radius_tip = self.radius_tip #radius of probe tip
-        radius_cone = self.radius_cone #radius of probe cone
-        height_cone = self.height_cone #height of probe cone
-        radius_disk = self.radius_disk #radius of probe disk
-        height_disk = self.height_disk #height of probe disk
+        radius_tip = r_dp(self.radius_tip) #radius of probe tip
+        radius_cone = r_dp(self.radius_cone) #radius of probe cone
+        height_cone = r_dp(self.height_cone) #height of probe cone
+        radius_disk = r_dp(self.radius_disk) #radius of probe disk
+        height_disk = r_dp(self.height_disk) #height of probe disk
 
         #user inputs of mesh discretization
-        area_air = self.area_air
-        area_water = self.area_water
-        area_solid = self.area_solid
+        area_air = r_dp(self.area_air)
+        area_water = r_dp(self.area_water)
+        area_solid = r_dp(self.area_solid)
 
         #discretize rho
         #lambda_d = min(9e-9,height_water)
         #rho = discretize_rho(lambda_d,rho_min=0,rho_max=radius_solid)
         #skip refinement between 0 and radius_solid
-        rho = np.r_[0,radius_air]
+        rho = np.r_[r_dp(0),radius_air]
 
         #insert air-water interface into the discretization
         #mask = rho<height_water
@@ -1536,10 +1712,10 @@ class Probe():
         #This script only works for the same height and radius for air and solid
         #X is the axis of symmetry
         #Y is the longitudinal axis
-        cpts = np.zeros((0,3)) #coord_x/coord_y/flag of control points
+        cpts = np.zeros((0,3),dtype=r_dp) #coord_x/coord_y/flag of control points
         segs = np.zeros((0,3)) #ind_a/ind_b/flag of line segmenets
-        holes = np.zeros((0,2)) #coord_x/coord_y
-        zones = np.zeros((0,3)) #coord_x/coord_y/area
+        holes = np.zeros((0,2),dtype=r_dp) #coord_x/coord_y
+        zones = np.zeros((0,3),dtype=r_dp) #coord_x/coord_y/area
 
         #***********************************************************************
         #-----------------------------------------------------------------------
@@ -1547,7 +1723,7 @@ class Probe():
         #define the lowermost, rightmost, and topmost boundary points
         #radius_b = max(radius_air,radius_solid)
         #height_b = max(height_air,height_solid)
-        x = np.r_[0,radius_air,radius_air,0]
+        x = np.r_[r_dp(0),radius_air,radius_air,r_dp(0)]
         y = np.r_[-height_solid-height_gap,-height_solid-height_gap,
                   height_air,height_air]
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*1]] #node flag of 1
@@ -1558,21 +1734,21 @@ class Probe():
         y = np.r_[-np.flipud(rho[:-1])-height_gap,rho[mask]-height_gap,
                   height_water-height_gap,0.0,2*radius_tip,height_cone,
                   height_cone+height_disk]
-        x = np.zeros_like(y)
+        x = np.zeros_like(y,dtype=r_dp)
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*1]] #node flag of 1
 
         #-----------------------------------------------------------------------
         #define the top edge points of the solid
         #skip edge points on the axis of symmetry
         x = np.r_[rho[1:-1],radius_air]
-        y = np.zeros_like(x)-height_gap
+        y = np.zeros_like(x,dtype=r_dp)-height_gap
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #-----------------------------------------------------------------------
         #define the top edge points of the water
         #skip edge points on the axis of symmetry
         x = np.r_[rho[1:-1],radius_air]
-        y = np.zeros_like(x)+height_water-height_gap
+        y = np.zeros_like(x,dtype=r_dp)+height_water-height_gap
         cpts = np.r_[cpts,np.c_[x,y,np.ones(len(x))*0]] #node flag of 0
 
         #-----------------------------------------------------------------------
@@ -1716,8 +1892,8 @@ class Probe():
             x = self.mesh_grid[0]
             y = self.mesh_grid[1]
 
-            x = x[x<=radius_air]
-            y = y[(y>=-height_solid-height_gap)&(y<=height_air)]
+            #x = x[x<=radius_air]
+            #y = y[(y>=-height_solid-height_gap)&(y<=height_air)]
 
             xg,yg = np.meshgrid(x,y)
             xg = xg.ravel()
@@ -1772,11 +1948,11 @@ class Probe():
             height_water = height_gap-abs(z_aw)
             height_solid = abs(min(y))-height_water
 
-            self.radius_air = radius_air
-            self.height_air = height_air
-            self.height_gap = height_gap
-            self.height_water = height_water
-            self.height_solid = height_solid
+#             self.radius_air = radius_air
+#             self.height_air = height_air
+#             self.height_gap = height_gap
+#             self.height_water = height_water
+#             self.height_solid = height_solid
             
             radius_tip = max(probe[probe[:,-1]==1,0])
             radius_cone = max(probe[probe[:,-1]==2,0])
@@ -1785,11 +1961,11 @@ class Probe():
             height_disk = max(probe[mask,1])-min(probe[mask,1])
             height_cone = max(probe[probe[:,-1]==2,1])-height_disk
 
-            self.radius_tip = radius_tip
-            self.radius_cone = radius_cone
-            self.height_cone = height_cone
-            self.radius_disk = radius_disk
-            self.height_disk = height_disk
+#             self.radius_tip = radius_tip
+#             self.radius_cone = radius_cone
+#             self.height_cone = height_cone
+#             self.radius_disk = radius_disk
+#             self.height_disk = height_disk
 
         #***********************************************************************
         #-----------------------------------------------------------------------
