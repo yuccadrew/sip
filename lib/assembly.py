@@ -569,10 +569,19 @@ class FEM():
             for key,value in kwargs.items():
                 setattr(self,key,value)
 
+    def append(self,hf_prefix):
+        hf = h5py.File(hf_prefix+'.h5','a')
+        dataset = hf['fsol']
+        dataset[...] = self.fsol
+        hf.close()
+
     def save(self,hf_prefix):
         hf = h5py.File(hf_prefix+'.h5','w')
-        hf.create_dataset('sol',data=self.sol)
         self.mesh.save(hf.create_group('mesh'))
+        if 'fsol' in self.__dict__.keys():
+            hf.create_dataset('fsol',data=self.fsol)
+        else:
+            hf.create_dataset('sol',data=self.sol)
         hf.close()
 
     @classmethod
@@ -595,6 +604,30 @@ class FEM():
         b = domain.b1+domain.b2+stern.b1+stern.b2+robin.b1+robin.b2
         K,b = set_first_kind_bc(dirichlet,K,b)
         self.sol = solve_system(K,b)
+
+    def fsolve(self,sigma):
+        mesh = self.mesh
+        pde = self.pde
+        self.fsol = np.zeros((len(sigma),len(mesh.nodes)),dtype=complex)
+        self.save(mesh.prefix)
+
+        domain = self.domain
+        stern = self.stern
+        robin = self.robin
+        dirichlet = self.dirichlet
+        for i in tqdm(range(len(sigma))):
+            #robin.g_s[:] = sigma[i,:]
+            #robin.K1,robin.K2,robin.b1,robin.b2 = assemble_Ks2d(mesh,robin)
+            diag_b = sigma[i,:]
+            diag_b = sparse.diags(diag_b.ravel())
+
+            K = (domain.K1+domain.K2+stern.K1+stern.K2
+                 +robin.K1+robin.K2)
+            b = (domain.b1+domain.b2+stern.b1+stern.b2
+                 +diag_b.dot(robin.b1+robin.b2))
+            K,b = set_first_kind_bc(dirichlet,K,b,verb=0)
+            self.fsol[i,:] = solve_system(K,b,verb=0)
+            self.append(mesh.prefix)
 
     def validate(self,ansol_in,interp=False,mask_in=[],xlim=[],ylim=[],
                  is_static=True):
@@ -800,6 +833,51 @@ class FEM():
         plt.tight_layout()
         plt.show()
 
+    def plot2(self,x,y,i=0):
+        nodes = self.mesh.nodes[self.mesh.is_on_stern,:]
+        n_ind = np.argmin((nodes[:,0]-x)**2+(nodes[:,1]-y)**2)
+        fsol = self.fsol[:,self.mesh.is_on_stern]
+#         tsol = self.tsol[i]
+
+        fig,ax = plt.subplots(2,2,figsize=(8,8))
+        axes = ax.flatten()
+
+        axes[0].plot(self.freq,np.real(fsol[:,n_ind]),'.')
+#         axes[1].plot(self.freq,np.real(fsol[:,n_ind,-1]),'.')
+#         axes[2].plot(self.time,np.real(tsol[:,n_ind,-2]),'.')
+#         axes[3].plot(self.time,np.real(tsol[:,n_ind,-1]),'.')
+
+        axes[0].set_xscale('log')
+        axes[1].set_xscale('log')
+        axes[2].set_xscale('log')
+        axes[3].set_xscale('log')
+
+        axes[0].set_xlabel('Frequency (Hz)')
+        axes[1].set_xlabel('Frequency (Hz)')
+        axes[2].set_xlabel('Time (s)')
+        axes[3].set_xlabel('Time (s)')
+        
+        axes[0].set_ylabel('$\delta U_s \;(V)$')
+        axes[1].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        axes[2].set_ylabel('$\delta U_s \;(V)$')
+        axes[3].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        
+        #axes[0].set_ylabel('(V)')
+        #axes[1].set_ylabel('(C/m^2)')
+        #axes[2].set_ylabel('(V)')
+        #axes[3].set_ylabel('(C/m^2)')
+        
+        #axes[0].set_title('(X,Y) = ({0:.2e},{1:.2e})'.format(x,y))
+        #axes[1].set_title('(X,Y) = ({0:.2e},{1:.2e})'.format(x,y))
+        
+        axes[0].set_title('$\delta U_s$')
+        axes[1].set_title('$\delta \Sigma_s$')
+        axes[2].set_title('$\delta U_s$')
+        axes[3].set_title('$\delta \Sigma_s$')
+
+        plt.tight_layout()
+        plt.show()
+
 
 class StatFEM(FEM):
     def __init__(self,*args,**kwargs):
@@ -938,6 +1016,18 @@ class PertFEM(FEM):
             for key,value in kwargs.items():
                 setattr(self,key,value)
 
+    def append(self,hf_prefix):
+        hf = h5py.File(hf_prefix+'.h5','a')
+        #hf.create_dataset('ratio',data=self.ratio)
+        #hf.create_dataset('freq',data=self.freq)
+        for i in range(len(self.ratio)):
+            #hf.create_dataset('ratio:{0:1.2f}'.format(self.ratio[i]),
+            #                  data=self.fsol[i])
+            dataset = hf['ratio:{0:1.2f}'.format(self.ratio[i])]
+            dataset[...] = self.fsol[i]
+        #self.mesh.save(hf.create_group('mesh'))
+        hf.close()
+
     def save(self,hf_prefix):
         hf = h5py.File(hf_prefix+'.h5','w')
         hf.create_dataset('ratio',data=self.ratio)
@@ -963,6 +1053,12 @@ class PertFEM(FEM):
         mesh = self.mesh
         pde = self.pde
         sol = [None]*len(ratio)
+
+        self.ratio = ratio
+        self.freq = freq
+        self.fsol = [np.zeros((len(freq),len(mesh.nodes),pde.shape[0]),
+                              dtype=complex)]*len(ratio)
+        self.save(mesh.prefix)
 
         #sigma_solid is not used when is_solid_metal is True
         for i in range(len(ratio)):
@@ -1007,12 +1103,16 @@ class PertFEM(FEM):
             if n_proc == 1:
                 for j in tqdm(range(len(freq))):
                     sol[i].append(func_pert(freq[j]))
+                    self.fsol[i][j,:,:] = sol[i][-1]
+                    self.append(mesh.prefix)
 
             else:
                 pool = mp.Pool(processes=n_proc)
                 for result in tqdm(pool.imap_unordered(func_pert,freq),
                                         total=len(freq)):
                     sol[i].append(result)
+                    self.fsol[i][j,:,:] = sol[i][-1]
+                    self.append(mesh.prefix)
 
                 pool.close()
                 pool.join()
@@ -1023,9 +1123,10 @@ class PertFEM(FEM):
             #convert sol[i] from list to ndarray.shape (n_freq,n_node,n_rep)
             sol[i] = np.array(sol[i])
 
-        self.ratio = ratio
-        self.freq = freq
-        self.fsol = sol
+        #self.ratio = ratio
+        #self.freq = freq
+        #self.fsol = sol
+        return sol
 
     def ftsolve(self,ratio,freqtime,stat=None,signal=None,ft='dlf',ftarg={},
                 n_proc=1):
@@ -1073,6 +1174,24 @@ class PertFEM(FEM):
 
         self.time = time
         self.tsol = tsol
+        return tsol
+
+#     def transform2(self,fsol,freq,time,signal=None,ft='dlf',ftarg={}):
+#         tsol = [None]*len(fsol)
+#         if signal is not None:
+#             for i in range(len(fsol)):
+#                 mask = self.mesh.is_on_stern
+#                 fEM = np.reshape(fsol[i][:,mask,:],(len(freq),-1))
+#                 off = np.empty(fEM.shape[1])
+
+#                 tEM,conv = tem(fEM,off,freq,time,signal,ft,ftarg)
+#                 # In case of QWE/QUAD, print Warning if not converged
+#                 conv_warning(conv, ftarg, 'Fourier', verb=3)
+#                 tsol[i] = np.reshape(tEM,(len(time),np.sum(mask),-1))
+
+#         self.time = time
+#         self.tsol = tsol
+#         return tsol
 
     def animate(self,freq=[],time=[],i=0,xlim=[],ylim=[],xscale='linear',
                 yscale='linear'):
@@ -1251,6 +1370,51 @@ class PertFEM(FEM):
         axes[1].plot(self.freq,np.real(fsol[:,n_ind,-1]),'.')
         axes[2].plot(self.time,np.real(tsol[:,n_ind,-2]),'.')
         axes[3].plot(self.time,np.real(tsol[:,n_ind,-1]),'.')
+
+        axes[0].set_xscale('log')
+        axes[1].set_xscale('log')
+        axes[2].set_xscale('log')
+        axes[3].set_xscale('log')
+
+        axes[0].set_xlabel('Frequency (Hz)')
+        axes[1].set_xlabel('Frequency (Hz)')
+        axes[2].set_xlabel('Time (s)')
+        axes[3].set_xlabel('Time (s)')
+        
+        axes[0].set_ylabel('$\delta U_s \;(V)$')
+        axes[1].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        axes[2].set_ylabel('$\delta U_s \;(V)$')
+        axes[3].set_ylabel('$\delta \Sigma_s \;(C/m^2)$')
+        
+        #axes[0].set_ylabel('(V)')
+        #axes[1].set_ylabel('(C/m^2)')
+        #axes[2].set_ylabel('(V)')
+        #axes[3].set_ylabel('(C/m^2)')
+        
+        #axes[0].set_title('(X,Y) = ({0:.2e},{1:.2e})'.format(x,y))
+        #axes[1].set_title('(X,Y) = ({0:.2e},{1:.2e})'.format(x,y))
+        
+        axes[0].set_title('$\delta U_s$')
+        axes[1].set_title('$\delta \Sigma_s$')
+        axes[2].set_title('$\delta U_s$')
+        axes[3].set_title('$\delta \Sigma_s$')
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot2(self,x,y,i=0):
+        nodes = self.mesh.nodes[self.mesh.is_on_stern,:]
+        n_ind = np.argmin((nodes[:,0]-x)**2+(nodes[:,1]-y)**2)
+        fsol = self.fsol[i][:,self.mesh.is_on_stern,:]
+#         tsol = self.tsol[i]
+
+        fig,ax = plt.subplots(2,2,figsize=(8,8))
+        axes = ax.flatten()
+
+        axes[0].plot(self.freq,np.real(fsol[:,n_ind,-2]),'.')
+        axes[1].plot(self.freq,np.real(fsol[:,n_ind,-1]),'.')
+#         axes[2].plot(self.time,np.real(tsol[:,n_ind,-2]),'.')
+#         axes[3].plot(self.time,np.real(tsol[:,n_ind,-1]),'.')
 
         axes[0].set_xscale('log')
         axes[1].set_xscale('log')

@@ -4,6 +4,7 @@ import time
 import matplotlib
 from cycler import cycler
 from numpy import float as r_dp
+from decimal import Decimal
 
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-poster')
@@ -86,7 +87,7 @@ def build_polyfile(mesh_prefix,cpts,segs,holes,zones):
 
 
 def call_triangle(mesh_prefix,triangle_path):
-    command = [triangle_path+' -pnAae '+mesh_prefix+'.poly']
+    command = [triangle_path+' -pnq30Aae '+mesh_prefix+'.poly']
     process = subprocess.Popen(command,shell=True)
     process.wait()
 
@@ -190,6 +191,41 @@ def build_basis2d(nodes,elements):
     print('Time elapsed ',elapsed,'sec')
     print('')
     return basis,area
+
+def build_basis2d_quad(nodes,elements):
+    #compute shape function basis for triangular elements
+    #input: nodes.shape (n_node,2)
+    #input: elements.shape (n_nelem,6)
+    #output: basis.shape(n_elem,3,6)
+    #output: area.shape (n_elem,)
+
+    print('Computing shape functions of triangular elements')
+    print('This will take a while')
+    start = time.time()
+    
+    n_elem = len(elements)
+    basis = np.zeros((n_elem,6,6),dtype=float)
+    a = np.zeros((n_elem,3),dtype=float)
+    b = np.zeros((n_elem,3),dtype=float)
+    c = np.zeros((n_elem,3),dtype=float)
+    area = np.zeros(n_elem,dtype=float)
+    
+    x_node = nodes[elements,0] #(n_elem,3)
+    y_node = nodes[elements,1] #(n_elem,3)
+    
+    #Jin's book eq 4.24
+    a[:,0] = x_node[:,1]*y_node[:,2]-y_node[:,1]*x_node[:,2]
+    a[:,1] = x_node[:,2]*y_node[:,0]-y_node[:,]
+    
+    
+    for i in range(n_elem):
+        pass
+    
+    elapsed = time.time()-start
+    print('Time elapsed ',elapsed,'sec')
+    print('')
+    #return basis,area
+    pass
 
 
 def build_basis1d(nodes,edges):
@@ -628,36 +664,36 @@ class Mesh():
 
         return mesh
 
-    def grad2d(self,f_n):
-        #input: f_n.shape (n_node,)
-        #output: f_out.shape (n_elem,3) with f_e/f_x/f_y
+    def grad2d(self,u_n):
+        #input: u_n.shape (n_node,)
+        #output: grad.shape (n_elem,3) with u_ele/u_x/u_y
         print('Computing fields and gradients in elements')
         start = time.time()
 
         n_elem = len(self.elem_mids)
-        f_out = np.zeros((n_elem,3),dtype=f_n.dtype)
+        grad = np.zeros((n_elem,3),dtype=u_n.dtype)
 
-        f_in = f_n[self.elements] #(n_elem,3)
+        f_in = u_n[self.elements] #(n_elem,3)
         x = self.elem_mids[:,0] #(n_elem,)
         y = self.elem_mids[:,1] #(n_elem,)
         x_r = np.c_[x,x,x] #(n_elem,3)
         y_r = np.c_[y,y,y] #(n_elem,3)
-        f_out[:,0] = np.sum((self.elem_basis[:,:,0]+self.elem_basis[:,:,1]*x_r
+        grad[:,0] = np.sum((self.elem_basis[:,:,0]+self.elem_basis[:,:,1]*x_r
                              +self.elem_basis[:,:,2]*y_r)*f_in,axis=1) #wrapped
-        f_out[:,1] = np.sum(f_in*self.elem_basis[:,:,1],axis=1)
-        f_out[:,2] = np.sum(f_in*self.elem_basis[:,:,2],axis=1)
+        grad[:,1] = np.sum(f_in*self.elem_basis[:,:,1],axis=1)
+        grad[:,2] = np.sum(f_in*self.elem_basis[:,:,2],axis=1)
 
         elapsed=time.time()-start
         print('Time elapsed ',elapsed,'sec')
         print('')
 
-        return f_out
+        return grad
 
-    def flux2d(self,f_x,f_y):
-        #input: f_x.shape (n_elem,)
-        #input: f_y.shape (n_elem,)
+    def flux2d(self,u_x,u_y):
+        #input: u_x.shape (n_elem,)
+        #input: u_y.shape (n_elem,)
         #output: flux.shape (n_edge,2)
-        flux = np.zeros((len(self.edges),2),dtype=f_x.dtype)
+        flux = np.zeros((len(self.edges),2),dtype=u_x.dtype)
         for i in range(2): #possible two adjacent elements
             nodes = self.nodes
             mask = self.edge_to_elem[:,i]>=0
@@ -688,256 +724,101 @@ class Mesh():
             #print(np.r_[n_x,n_y])
 
             try:
-                flux[mask,i] = (f_x[self.edge_to_elem[mask,i]]*n_x
-                                +f_y[self.edge_to_elem[mask,i]]*n_y) #wrapped
+                flux[mask,i] = (u_x[self.edge_to_elem[mask,i]]*n_x
+                                +u_y[self.edge_to_elem[mask,i]]*n_y) #wrapped
             except:
-                flux[mask,i] = f_x*n_x+f_y*n_y #for test purpose f_x=1,f_y=1
+                flux[mask,i] = u_x*n_x+u_y*n_y #for test purpose u_x=1,u_y=1
 
         return flux
 
-    def force2d(self,u):
-        #input: f_x.shape (n_elem,) equal to -e_x
-        #input: f_y.shape (n_elem,) equal to -e_y
-        #output: force.shape (n_edge,2) -> f_out (n_edge,3)[mask,:]
-#         mask = self.is_with_equipotential
-#         edges = self.edges[mask,:]
-#         edge_mids = self.edge_mids[mask,:]
-#         f_out = np.zeros((len(edges),5),dtype=u.dtype)
+    def force2d(self,u_n):
+        if u_n.ndim==1:
+            u_n = np.reshape(u_n,(1,-1))
+            
+        nodes = self.nodes/self.unscale_factor
+        grid_x = self.grid_x/self.unscale_factor
+        grid_y = self.grid_y/self.unscale_factor
 
-#         x = mesh_grid[0]
-#         y = mesh_grid[1]
-#         is_on_probe = np.zeros((len(self.nodes),4),dtype=bool)
-        probe = setup_probe(self.grid_x,self.grid_y)
+        probe = setup_probe(grid_x,grid_y)
         n_bot = len(probe)//2
-        f_out = np.zeros((n_bot,5))
+        force = np.zeros((n_bot,10),dtype=u_n.dtype)
+        Fz = (0.0)
         for i in range(n_bot):
-            x0 = self.grid_x[probe[i,2].astype(int)]
-            y0 = self.grid_y[probe[i,3].astype(int)]
-            x1 = min(self.grid_x[self.grid_x>x0])
-            y1 = max(self.grid_y[self.grid_y<y0])
-            y2 = max(self.grid_y[self.grid_y<y1])
-#             print('i',i)
-#             print(x0,x1)
+#         for i in range(3):
+            x0 = grid_x[probe[i,2].astype(int)]
+            y0 = grid_y[probe[i,3].astype(int)]
+            x1 = min(grid_x[grid_x>x0])
+            y1 = max(grid_y[grid_y<y0])
+            y2 = max(grid_y[grid_y<y1])
 
-            dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y0)**2
+            dist2 = (nodes[:,0]-x0)**2+(nodes[:,1]-y0)**2
             ind_0 = np.argmin(dist2)
-            x_0 = self.nodes[ind_0,0]
-            y_0 = self.nodes[ind_0,1]
-#             print(ind_0,x0,y0)
-            
-            dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y1)**2
+            x_0 = nodes[ind_0,0]
+            y_0 = nodes[ind_0,1]
+#             print('x',x0,x_0)
+#             print('y',y0,y_0)
+
+            dist2 = (nodes[:,0]-x0)**2+(nodes[:,1]-y1)**2
             ind_1 = np.argmin(dist2)
-            x_1 = self.nodes[ind_1,0]
-            y_1 = self.nodes[ind_1,1]
-            u_1 = u[ind_1]
-#             print(ind_1,x0,y1)
-#             print(x_0,x_1)
+            x_1 = nodes[ind_1,0]
+            y_1 = nodes[ind_1,1]
+            u_1 = u_n[:,ind_1]
             
-            dist2 = (self.nodes[:,0]-x1)**2+(self.nodes[:,1]-y1)**2
+            dist2 = (nodes[:,0]-x1)**2+(nodes[:,1]-y1)**2
             ind_2 = np.argmin(dist2)
-            x_2 = self.nodes[ind_2,0]
-            y_2 = self.nodes[ind_2,1]
-            u_2 = u[ind_2]
+            x_2 = nodes[ind_2,0]
+            y_2 = nodes[ind_2,1]
+            u_2 = u_n[:,ind_2]
 
-            dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y2)**2
+            dist2 = (nodes[:,0]-x0)**2+(nodes[:,1]-y2)**2
             ind_3 = np.argmin(dist2)
-            x_3 = self.nodes[ind_3,0]
-            y_3 = self.nodes[ind_3,1]
-            u_3 = u[ind_3]
+            x_3 = nodes[ind_3,0]
+            y_3 = nodes[ind_3,1]
+            u_3 = u_n[:,ind_3]
 
-            #compute f_out
-            hn = x_2-x_1
-            hm = y_1-y_3
-            ex = -(u_2-u_1)/hn #skip stepwise boundary by not using u_0
-            ey = -(u_1-u_3)/hm #skip stepwise boundary by not using u_0
-            e2 = ex**2+ey**2
-            df = 0.5*(x_0+x_1)*hn*e2
+            #compute force
+            hn = (x_2)-(x_1)
+            hm = (y_1)-(y_3)
+            ex = -((u_2)-(u_1))/(hn) #skip stepwise boundary by not using u_0
+            ey = -((u_1)-(u_3))/(hm) #skip stepwise boundary by not using u_0
+            e2 = (ex)*(ex)+(ey)*(ey)
+            df = (0.5)*((x_1)+(x_2))*(hn)*(e2)
+            Fz = (Fz)+(df)
+            #print(df.shape)
+            #print(Fz.shape)
 
-            f_out[i,0] = 0.5*(x_0+x_1) #x
-            f_out[i,1] = y_0 #y
-            f_out[i,2] = 0.5*(x_0+x_1)*e2*hn
+            #force[i,0] = 0.5*(x_0+x_1) #x
+            #force[i,1] = y_0 #y
+            force[i,0] = 0.5*(x_1+x_2)
+            force[i,1] = y_0
+            force[i,2] = df[0]
+            force[i,3] = Fz[0]
+            force[i,4] = e2[0]
+            force[i,5] = ex[0]
+            force[i,6] = ey[0]
+            force[i,7] = u_1[0]
+            force[i,8] = u_2[0]
+            force[i,9] = u_3[0]
 
-#         for i in range(len(edges)):
-#             ind = np.argmin(self.nodes[edges[i,:],0]) #left point
-#             is_on_probe[edges[i,ind],0] = True
-#             x0 = self.nodes[edges[i,ind],0]
-#             y0 = self.nodes[edges[i,ind],1]
-#             x1 = min(x[x>x0])
-#             y1 = max(y[y<y0])
-#             y2 = max(y[y<y1])
+        #print(force)
+        fmt = ' '.join(['%15.5f']*10)
+        header = ' # rho, z(rho), dF_z, F_z, E2 (=>sigma2=e0^2*E2), Er, Ez, Ui,j , Ui+1,j , Ui,j-1'
+        comments = ''
+        np.savetxt('force.out',np.real(force),fmt,header=header,comments='')
+        return force,Fz
 
-#             dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y1)**2
-#             n_ind = np.argmin(dist2)
-#             is_on_probe[n_ind,1] = True
-#             u1 = u[n_ind]
+    def energy2d(self,u_n):
+        #aa(j,i) = .5_dp*(r(i)+r(i+1)) *hn(i) / hm(j)*eps_r
+        #bb(j,i) = .5_dp*(r(i)+r(i+1)) /hn(i) * hm(j)*eps_r
+        #energy += aa(j,i)*(u(j,i)-u(j-1,i))**2 + bb(j,i)*(u(j,i+1)-u(j,i))**2
 
-#             dist2 = (self.nodes[:,0]-x1)**2+(self.nodes[:,1]-y1)**2
-#             n_ind = np.argmin(dist2)
-#             is_on_probe[n_ind,2] = True
-#             u2 = u[n_ind]
-
-#             dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y2)**2
-#             n_ind = np.argmin(dist2)
-#             is_on_probe[n_ind,3] = True
-#             u3 = u[n_ind]
-            
-#             #start computing
-#             hn = x1-x0
-#             hm = y0-y1
-#             ex = -(u2-u1)/hn
-#             ey = -(u1-u3)/hm
-#             e2 = ex**2+ey**2
-#             df = 0.5*(x0+x1)*hn*e2
-
-#             f_out[i,0] = 0.5*(x0+x1) #x
-#             f_out[i,1] = y0 #y
-#             f_out[i,2] = 0.5*(x0+x1)*e2*hn
-        
-#         mask = edge_mids[:,0]>20 #test only!
-#         ztop = max(edge_mids[mask,1])
-#         zbot = min(edge_mids[mask,1])
-#         print(ztop,zbot)
-#         mask = edge_mids[:,1]<0.5*(ztop+zbot)
-#         f_out = f_out[mask,:]
-
-#         self.is_on_probe = is_on_probe
-        return f_out
-
-#         if 'is_on_probe' not in self.__dict__.keys():
-#             x = mesh_grid[0]
-#             y = mesh_grid[1]
-#             is_on_probe = np.zeros((len(self.nodes),4),dtype=bool)
-#             for i in range(len(edges)):
-#                 ind = np.argmin(self.nodes[edges[i,:],0]) #left point
-#                 is_on_probe[edges[i,ind],0] = True
-#                 x0 = self.nodes[edges[i,ind],0]
-#                 y0 = self.nodes[edges[i,ind],1]
-#                 x1 = min(x[x>x0])
-#                 y1 = max(y[y<y0])
-#                 y2 = max(y[y<y1])
-
-#                 dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y1)**2
-#                 n_ind = np.argmin(dist2)
-#                 is_on_probe[n_ind,1] = True
-
-#                 dist2 = (self.nodes[:,0]-x1)**2+(self.nodes[:,1]-y1)**2
-#                 n_ind = np.argmin(dist2)
-#                 is_on_probe[n_ind,2] = True
-
-#                 dist2 = (self.nodes[:,0]-x0)**2+(self.nodes[:,1]-y2)**2
-#                 n_ind = np.argmin(dist2)
-#                 is_on_probe[n_ind,3] = True
-#             self.is_on_probe = is_on_probe
-
-#         x0 = self.nodes[self.is_on_probe[:,0],0]
-#         x1 = self.nodes[self.is_on_probe[:,2],0]
-#         hn = x1-x0
-
-#         y0 = self.nodes[self.is_on_probe[:,0],1]
-#         y1 = self.nodes[self.is_on_probe[:,1],1]
-#         hm = y0-y1
-
-#         u1 = u[self.is_on_probe[:,1]] #under tip
-#         u2 = u[self.is_on_probe[:,2]] #under tip and move+1 along x
-#         u3 = u[self.is_on_probe[:,3]] #under tip and move-1 along y
-#         ex = -(u2-u1)/hn
-#         ey = -(u1-u3)/hm
-#         e2 = ex**2+ey**2
-
-#         f_out[:,0] = 0.5*(x0+x1) #x
-#         f_out[:,1] = y0 #y
-# #         f_out[:,2] = e2
-#         f_out[:,2] = 0.5*(x0+x1)*e2
-        
-#         ztop = max(edge_mids[:,1])
-#         mask = edge_mids[:,1]<ztop
-#         f_out = f_out[mask,:]
-
-#         return f_out
-
-#             x1 = self.nodes[self.is_on_probe[:,0],0]
-#             y1 = self.nodes[self.is_on_probe[:,1],1]
-#             u0 = u[self.is_on_probe[:,0]]
-
-#             x1 = self.nodes[self.is_on_probe[:,2]]
-#             hn = self.nodes[#x1-x0
-
-
-            #print(x_i,self.nodes[is_on_probe[:,0],0])
-            #print(y2,y1,y0)
-            #print(x0,x1)
-
-#         nodes = self.nodes
-#         elements = self.elements
-#         elem_mids = self.elem_mids
-#         elem_factor = self.elem_factor
-
-#         mask = self.is_with_equipotential
-#         edges = self.edges[mask,:]
-#         edge_mids = self.edge_mids[mask,:]
-#         edge_len = self.edge_len[mask]
-#         edge_factor = self.edge_factor[mask]
-
-#         if 'is_in_probe' not in self.__dict__.keys():
-#             is_in_probe = np.zeros(len(elements),dtype=bool) #elements next to probe
-#             x = elem_mids[:,0]
-#             y = elem_mids[:,1]
-#             for i in range(len(edges)):
-#                 edge_x = edge_mids[i,0]
-#                 edge_y = edge_mids[i,1]
-#                 j = np.argmin((x-edge_x)**2+(y-edge_y)**2)
-#                 is_in_probe[j] = True
-#             self.is_in_probe = is_in_probe
-
-#         #vector u points from edges[:,0] to edges[:,1]
-#         u_x = nodes[edges[:,1],0]-nodes[edges[:,0],0] #(n_edge,)[mask]
-#         u_y = nodes[edges[:,1],1]-nodes[edges[:,0],1] #(n_edge,)[mask]
-#         u_len = np.sqrt(u_x**2+u_y**2) #(n_edge,)[mask]
-#         u_x = u_x/u_len
-#         u_y = u_y/u_len
-
-#         #vector v points from elem_mids to edges[:,0]
-#         #elements = self.elements[self.is_in_probe,:] #(n_edge,3)[mask,:]
-#         #elem_mids = self.elem_mids[self.is_in_probe,:] #(n_edge,2)[mask,:]
-#         v_x = nodes[edges[:,0],0]-elem_mids[self.is_in_probe,0] #(n_edge,)[mask]
-#         v_y = nodes[edges[:,0],1]-elem_mids[self.is_in_probe,1] #(n_edge,)[mask]
-#         #v_len = np.sqrt(v_x**2+v_y**2)
-#         #v_x = v_x/v_len
-#         #v_y = v_y/v_len
-
-#         #vector n = v-dot(u,v)u
-#         n_x = v_x-(u_x*v_x+u_y*v_y)*u_x #(n_edge,)[mask]
-#         n_y = v_y-(u_x*v_x+u_y*v_y)*u_y #(n_edge,)[mask]
-#         n_len = np.sqrt(n_x**2+n_y**2) #(n_edge,)[mask]
-#         n_x = n_x/n_len
-#         n_y = n_y/n_len
-#         #print(np.c_[n_x,n_y,n_x*u_x+n_y*u_y])
-#         #print(np.c_[u_x*edge_len,n_y*edge_len])
-
-#         if False:
-#             e2 = (f_x[self.is_in_probe]**2
-#                  +f_y[self.is_in_probe]**2)
-#             hn = abs(nodes[edges[:,1],0]-nodes[edges[:,0],0])
-#             zm = np.minimum(nodes[edges[:,0],1],nodes[edges[:,1],1])
-#             f_out = np.zeros((len(edges),5),dtype=f_x.dtype)
-#             f_out[:,0] = edge_mids[:,0] #x
-#             #f_out[:,1] = edge_mids[:,1] #y
-#             f_out[:,1] = zm
-#             f_out[:,2] = e2*hn*edge_factor*np.sign(n_y) #force by element
-#             f_out[:,3] = e2*np.sign(n_y)
-#             f_out[:,4] = edge_factor*np.sign(n_y)
-#         else:
-#             e2 = (f_x[self.is_in_probe]*n_x+f_y[self.is_in_probe]*n_y)**2
-#             hn = abs(nodes[edges[:,1],0]-nodes[edges[:,0],0])
-#             zm = np.minimum(nodes[edges[:,0],1],nodes[edges[:,1],1])
-#             f_out = np.zeros((len(edges),5),dtype=f_x.dtype)
-#             f_out[:,0] = edge_mids[:,0] #x
-#             #f_out[:,1] = edge_mids[:,1] #y
-#             f_out[:,1] = zm
-#             f_out[:,2] = e2*n_y*edge_len*edge_factor #force by element
-#             f_out[:,3] = e2*np.sign(n_y)
-
-#         return f_out
+        grad = self.grad2d(u_n)
+        eps_r = np.zeros(len(self.elements))
+        mask = self.elem_flags==1
+        eps_r[mask] = 5.9
+        energy = np.sum(eps_r*grad[:,1]**2*self.elem_area*self.elem_factor
+                        +eps_r*grad[:,2]**2*self.elem_area*self.elem_factor)
+        return energy
 
     def to_spherical(self,is_nodal=True):
         if is_nodal:
@@ -990,8 +871,8 @@ class Mesh():
 
         #elem_to_edge = np.array(elem_to_edge,dtype=int)
         #sort of self.edge_to_elem by columns
-        #left column: flux2d positive if (f_x,f_y) is (1,1)
-        #right column: flux2d negative if (f_x,f_y) is (1,1)
+        #left column: flux2d positive if (u_x,u_y) is (1,1)
+        #right column: flux2d negative if (u_x,u_y) is (1,1)
         elapsed = time.time()-start
         print('Time elapsed ',elapsed,'sec')
         print('')
@@ -1027,11 +908,11 @@ class Mesh():
         ax.set_ylabel('Y (m)')
         ax.set_title('Zero values are shaded')
     
-    def scatter(self,f_n,xlim=[],ylim=[],cmap='coolwarm'): #scatter plots of colored points
-        if len(f_n)==len(self.elements):
+    def scatter(self,u_n,xlim=[],ylim=[],cmap='coolwarm'): #scatter plots of colored points
+        if len(u_n)==len(self.elements):
             x = self.elem_mids[:,0]
             y = self.elem_mids[:,1]
-        elif len(f_n)==len(self.edges):
+        elif len(u_n)==len(self.edges):
             x = self.edge_mids[:,0]
             y = self.edge_mids[:,1]
         else:
@@ -1039,7 +920,7 @@ class Mesh():
             y = self.nodes[:,1]
 
         fig,ax = plt.subplots(figsize=(10,8))
-        sc = ax.scatter(x,y,s=200,c=f_n,cmap=cmap)
+        sc = ax.scatter(x,y,s=200,c=u_n,cmap=cmap)
         fig.colorbar(sc,ax=ax,location='right')
         ax.set_aspect('equal')
         ax.set_xlabel('X (m)')
@@ -1483,8 +1364,8 @@ class Mesh():
         
         self.elem_to_edge = np.array(self.elem_to_edge,dtype=int)
         #sort of self.edge_to_elem by columns
-        #left column: flux2d positive if (f_x,f_y) is (1,1)
-        #right column: flux2d negative if (f_x,f_y) is (1,1)
+        #left column: flux2d positive if (u_x,u_y) is (1,1)
+        #right column: flux2d negative if (u_x,u_y) is (1,1)
         elapsed = time.time()-start
         print('Time elapsed ',elapsed,'sec')
         print('')
@@ -1515,6 +1396,14 @@ class Mesh():
         elapsed = time.time()-start
         print('Time elapsed ',elapsed,'sec')
         print('')
+
+
+class MeshQuad(Mesh):
+    pass
+
+
+class MeshCubic(Mesh):
+    pass
 
 
 class Complex():
@@ -1946,7 +1835,7 @@ class Probe():
             height_air = max(y)
             height_gap = abs(z_sw)
             height_water = height_gap-abs(z_aw)
-            height_solid = abs(min(y))-height_water
+            height_solid = abs(min(y))-height_gap
 
 #             self.radius_air = radius_air
 #             self.height_air = height_air
@@ -2001,8 +1890,8 @@ class Probe():
             cpts[:,1] = cpts[:,1]*self.dist_factor
             zones[:,2] = zones[:,2]*self.dist_factor**2 
 
+        build_polyfile(self.mesh_prefix,cpts,segs,holes,zones)
         if self.build_mesh:
-            build_polyfile(self.mesh_prefix,cpts,segs,holes,zones)
             call_triangle(self.mesh_prefix,'triangle')
 
     def triplot(self,xunit=[],yunit=[]):
